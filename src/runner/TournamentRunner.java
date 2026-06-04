@@ -2,6 +2,7 @@ package runner;
 
 import bot.IBotAI;
 import bot.SimpleBot;
+import bot.StudentBotV2;
 import engine.BattleEngine;
 import engine.MatchResult;
 import java.io.*;
@@ -9,7 +10,7 @@ import java.io.*;
 public class TournamentRunner {
 
     public static void main(String[] args) throws IOException {
-        IBotAI botA = new SimpleBot();
+        IBotAI botA = new StudentBotV2();
         IBotAI botB = new SimpleBot();
 
         PrintWriter csv = new PrintWriter(new FileWriter("match_results.csv"));
