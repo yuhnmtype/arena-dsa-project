@@ -81,6 +81,7 @@ public class Champion {
     public boolean isAlive()            { return alive; }
     public Position getPosition()       { return position; }
     public void setPosition(Position p) { this.position = p; }
+    public int getSkillCooldown()       { return skillCooldown; }
 
     @Override
     public String toString() {

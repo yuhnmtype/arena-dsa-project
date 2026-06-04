@@ -27,8 +27,10 @@ public class BattleEngine {
 
         List<Champion> blueTeam = new ArrayList<>();
         List<Champion> redTeam  = new ArrayList<>();
-        for (String id : blueDraft) blueTeam.add(ChampionFactory.create(id, "BLUE"));
-        for (String id : redDraft)  redTeam.add(ChampionFactory.create(id, "RED"));
+        for (int i = 0; i < blueDraft.size(); i++)
+            blueTeam.add(ChampionFactory.createWithUniqueId(blueDraft.get(i), "BLUE", i));
+        for (int i = 0; i < redDraft.size(); i++)
+            redTeam.add(ChampionFactory.createWithUniqueId(redDraft.get(i), "RED", i));
 
         // ── PLACEMENT ────────────────────────────────────────────
         List<Position> blueCells  = getAllowedCells("BLUE");

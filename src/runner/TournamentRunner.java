@@ -27,6 +27,6 @@ public class TournamentRunner {
         }
 
         csv.close();
-        System.out.println("Done: " + total + " matches → match_results.csv");
+        System.out.println("Done: " + total + " matches -> match_results.csv");
     }
 }

@@ -34,4 +34,15 @@ public class ChampionFactory {
     public static int getCost(String id) {
         return create(id, "BLUE").getCost();
     }
+
+    public static Champion createWithUniqueId(String templateId, String side, int index) {
+    Champion c = create(templateId, side);
+    return new Champion(
+        side + "_" + templateId + "_" + index, // unique ID: "BLUE_KNIGHT_0"
+        side, c.getCost(), c.getMaxHp(),
+        c.getAttack(), c.getDefense(), c.getRange(),
+        c.getMoveRange(), c.getSpeed(), c.getMaxMana(),
+        c.getSkillManaCost(), c.getSkillCooldown()
+    );
+}
 }
