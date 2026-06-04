@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Arena DSA — Tournament Analysis</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; background: #0f1117; color: #fff; padding: 24px; }
+    h1 { text-align: center; color: #4A9EFF; margin-bottom: 8px; font-size: 24px; }
+    p.sub { text-align: center; color: #888; margin-bottom: 32px; font-size: 14px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 1100px; margin: 0 auto; }
+    .card { background: #1a1d27; border-radius: 12px; padding: 20px; border: 1px solid #2a2d3a; }
+    .card h3 { color: #aaa; font-size: 13px; text-transform: uppercase; margin-bottom: 16px; letter-spacing: 1px; }
+    .stat-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; }
+    .stat-val { font-weight: bold; color: #4A9EFF; }
+    canvas { max-height: 260px; }
+    #loading { text-align: center; color: #888; margin-top: 80px; font-size: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Arena DSA — Tournament Analysis</h1>
+  <p class="sub" id="subtitle">Loading data...</p>
+
+  <div id="loading">Loading match_results.csv...</div>
+
+  <div class="grid" id="dashboard" style="display:none">
+    <div class="card">
+      <h3>Win Rate by Side</h3>
+      <canvas id="winRate"></canvas>
+    </div>
+    <div class="card">
+      <h3>Average Rounds by Budget</h3>
+      <canvas id="rounds"></canvas>
+    </div>
+    <div class="card">
+      <h3>Win Rate by Budget</h3>
+      <canvas id="budgetWin"></canvas>
+    </div>
+    <div class="card">
+      <h3>Key Stats</h3>
+      <div id="stats" style="margin-top:8px"></div>
+    </div>
+  </div>
+
+  <script>
+    // ── PARSE CSV ────────────────────────────────────────────
+    function parseCSV(text) {
+      const lines  = text.trim().split('\n');
+      const header = lines[0].split(',');
+      return lines.slice(1).map(line => {
+        const cols = line.split(',');
+        return {
+          budget:   parseInt(cols[0]),
+          winner:   cols[1].trim(),
+          rounds:   parseInt(cols[2]),
+          blueComp: cols[3],
+          redComp:  cols[4]
+        };
+      });
+    }
+
+    // ── PROCESS DATA ─────────────────────────────────────────
+    function processData(rows) {
+      const budgets = [...new Set(rows.map(r => r.budget))].sort((a,b) => a-b);
+
+      const blueWinByBudget  = {};
+      const redWinByBudget   = {};
+      const avgRoundsByBudget = {};
+
+      budgets.forEach(b => {
+        const group  = rows.filter(r => r.budget === b);
+        const blueW  = group.filter(r => r.winner === 'BLUE').length;
+        const redW   = group.filter(r => r.winner === 'RED').length;
+        const avgR   = group.reduce((s, r) => s + r.rounds, 0) / group.length;
+        blueWinByBudget[b]   = blueW;
+        redWinByBudget[b]    = redW;
+        avgRoundsByBudget[b] = parseFloat(avgR.toFixed(1));
+      });
+
+      const totalBlue = rows.filter(r => r.winner === 'BLUE').length;
+      const totalRed  = rows.filter(r => r.winner === 'RED').length;
+      const avgRounds = (rows.reduce((s,r) => s + r.rounds, 0) / rows.length).toFixed(1);
+      const minRounds = Math.min(...rows.map(r => r.rounds));
+      const maxRounds = Math.max(...rows.map(r => r.rounds));
+
+      return { budgets, blueWinByBudget, redWinByBudget,
+               avgRoundsByBudget, totalBlue, totalRed,
+               total: rows.length, avgRounds, minRounds, maxRounds };
+    }
+
+    // ── RENDER CHARTS ────────────────────────────────────────
+    function renderCharts(d) {
+      const labels = d.budgets;
+      const blueData = labels.map(b => d.blueWinByBudget[b]);
+      const redData  = labels.map(b => d.redWinByBudget[b]);
+      const roundData = labels.map(b => d.avgRoundsByBudget[b]);
+
+      // Chart 1: Doughnut win rate
+      new Chart(document.getElementById('winRate'), {
+        type: 'doughnut',
+        data: {
+          labels: [`BLUE (${d.totalBlue})`, `RED (${d.totalRed})`],
+          datasets: [{ data: [d.totalBlue, d.totalRed],
+            backgroundColor: ['#4A9EFF','#FF5C5C'], borderWidth: 0 }]
+        },
+        options: { plugins: { legend: { labels: { color: '#ccc', font: { size: 13 } } } } }
+      });
+
+      // Chart 2: Line avg rounds
+      new Chart(document.getElementById('rounds'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{ label: 'Avg Rounds', data: roundData,
+            borderColor: '#A78BFA', backgroundColor: 'rgba(167,139,250,0.1)',
+            fill: true, tension: 0.3, pointRadius: 3 }]
+        },
+        options: {
+          plugins: { legend: { labels: { color: '#ccc' } } },
+          scales: {
+            x: { ticks: { color: '#888' }, grid: { color: '#2a2d3a' } },
+            y: { ticks: { color: '#888' }, grid: { color: '#2a2d3a' }, min: 0 }
+          }
+        }
+      });
+
+      // Chart 3: Stacked bar win by budget
+      new Chart(document.getElementById('budgetWin'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { label: 'BLUE', data: blueData, backgroundColor: '#4A9EFF' },
+            { label: 'RED',  data: redData,  backgroundColor: '#FF5C5C' }
+          ]
+        },
+        options: {
+          plugins: { legend: { labels: { color: '#ccc' } } },
+          scales: {
+            x: { stacked: true, ticks: { color: '#888' }, grid: { color: '#2a2d3a' } },
+            y: { stacked: true, ticks: { color: '#888' }, grid: { color: '#2a2d3a' } }
+          }
+        }
+      });
+
+      // Stats panel
+      const blueRate = ((d.totalBlue / d.total) * 100).toFixed(0);
+      const redRate  = ((d.totalRed  / d.total) * 100).toFixed(0);
+      document.getElementById('stats').innerHTML = `
+        <div class="stat-row"><span>Total matches</span><span class="stat-val">${d.total}</span></div>
+        <div class="stat-row"><span>BLUE win rate</span><span class="stat-val">${blueRate}%</span></div>
+        <div class="stat-row"><span>RED win rate</span><span class="stat-val">${redRate}%</span></div>
+        <div class="stat-row"><span>Avg rounds</span><span class="stat-val">${d.avgRounds}</span></div>
+        <div class="stat-row"><span>Fastest game</span><span class="stat-val">${d.minRounds} rounds</span></div>
+        <div class="stat-row"><span>Longest game</span><span class="stat-val">${d.maxRounds} rounds</span></div>
+        <div class="stat-row"><span>BFS complexity</span><span class="stat-val">O(V+E) = O(256)</span></div>
+        <div class="stat-row"><span>Greedy vs brute</span><span class="stat-val">O(n log n) vs O(2ⁿ)</span></div>
+      `;
+    }
+
+    // ── MAIN: FETCH CSV ──────────────────────────────────────
+    fetch('match_results.csv')
+      .then(r => {
+        if (!r.ok) throw new Error('CSV not found');
+        return r.text();
+      })
+      .then(text => {
+        const rows = parseCSV(text);
+        const data = processData(rows);
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('dashboard').style.display = 'grid';
+        document.getElementById('subtitle').textContent =
+          `Loaded ${data.total} matches from match_results.csv · Budget 5–100`;
+        renderCharts(data);
+      })
+      .catch(err => {
+        document.getElementById('loading').textContent =
+          'Không tìm thấy match_results.csv — chạy TournamentRunner trước!';
+      });
+  </script>
+</body>
+</html>
