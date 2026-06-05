@@ -5,178 +5,234 @@
   <title>Arena DSA — Tournament Analysis</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; background: #0f1117; color: #fff; padding: 24px; }
-    h1 { text-align: center; color: #4A9EFF; margin-bottom: 8px; font-size: 24px; }
-    p.sub { text-align: center; color: #888; margin-bottom: 32px; font-size: 14px; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 1100px; margin: 0 auto; }
-    .card { background: #1a1d27; border-radius: 12px; padding: 20px; border: 1px solid #2a2d3a; }
-    .card h3 { color: #aaa; font-size: 13px; text-transform: uppercase; margin-bottom: 16px; letter-spacing: 1px; }
-    .stat-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; }
-    .stat-val { font-weight: bold; color: #4A9EFF; }
-    canvas { max-height: 260px; }
-    #loading { text-align: center; color: #888; margin-top: 80px; font-size: 16px; }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:Arial,sans-serif; background:#0f1117; color:#fff; padding:24px; }
+    h1 { text-align:center; color:#4A9EFF; margin-bottom:6px; font-size:22px; }
+    p.sub { text-align:center; color:#888; margin-bottom:28px; font-size:13px; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; max-width:1100px; margin:0 auto; }
+    .grid3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:20px; max-width:1100px; margin:20px auto 0; }
+    .card { background:#1a1d27; border-radius:12px; padding:18px; border:1px solid #2a2d3a; }
+    .card h3 { color:#aaa; font-size:12px; text-transform:uppercase; margin-bottom:14px; letter-spacing:1px; }
+    .stat-row { display:flex; justify-content:space-between; margin-bottom:7px; font-size:13px; }
+    .stat-val { font-weight:bold; color:#4A9EFF; }
+    .tag { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:bold; margin-right:4px; }
+    .tag-v2s  { background:#1a3a5c; color:#4A9EFF; }
+    .tag-sv2  { background:#3a1a1a; color:#FF5C5C; }
+    .tag-v2v2 { background:#1a3a1a; color:#4CAF50; }
+    .tag-ss   { background:#2a2a2a; color:#888; }
+    canvas { max-height:240px; }
+    #loading { text-align:center; color:#888; margin-top:80px; font-size:16px; }
   </style>
 </head>
 <body>
   <h1>Arena DSA — Tournament Analysis</h1>
   <p class="sub" id="subtitle">Loading data...</p>
-
-  <div id="loading">Loading match_results.csv...</div>
-
-  <div class="grid" id="dashboard" style="display:none">
-    <div class="card">
-      <h3>Win Rate by Side</h3>
-      <canvas id="winRate"></canvas>
+  <div id="loading">⏳ Loading match_results.csv...</div>
+  <div id="dashboard" style="display:none">
+    <div class="grid">
+      <div class="card"><h3>Win Rate by Match Type</h3><canvas id="winByType"></canvas></div>
+      <div class="card"><h3>Average Rounds by Budget</h3><canvas id="roundsByBudget"></canvas></div>
     </div>
-    <div class="card">
-      <h3>Average Rounds by Budget</h3>
-      <canvas id="rounds"></canvas>
+    <div class="grid" style="margin-top:20px">
+      <div class="card"><h3>Average HP Remaining (Winner)</h3><canvas id="hpRemaining"></canvas></div>
+      <div class="card"><h3>Average Survivors at End</h3><canvas id="survivors"></canvas></div>
     </div>
-    <div class="card">
-      <h3>Win Rate by Budget</h3>
-      <canvas id="budgetWin"></canvas>
+    <div class="grid3" style="margin-top:20px">
+      <div class="card"><h3>V2 vs Simple — Win Rate by Budget</h3><canvas id="v2simple"></canvas></div>
+      <div class="card"><h3>Simple vs V2 — Win Rate by Budget</h3><canvas id="simplev2"></canvas></div>
+      <div class="card"><h3>V2 vs V2 — Win Rate by Budget</h3><canvas id="v2v2"></canvas></div>
     </div>
-    <div class="card">
-      <h3>Key Stats</h3>
-      <div id="stats" style="margin-top:8px"></div>
+    <div class="grid" style="margin-top:20px">
+      <div class="card">
+        <h3>Legend</h3>
+        <div style="margin-top:8px">
+          <div class="stat-row"><span><span class="tag tag-v2s">V2_vs_Simple</span>StudentBotV2 (BLUE) vs SimpleBot (RED)</span></div>
+          <div class="stat-row"><span><span class="tag tag-sv2">Simple_vs_V2</span>SimpleBot (BLUE) vs StudentBotV2 (RED)</span></div>
+          <div class="stat-row"><span><span class="tag tag-v2v2">V2_vs_V2</span>StudentBotV2 vs StudentBotV2</span></div>
+          <div class="stat-row"><span><span class="tag tag-ss">Simple_vs_Simple</span>SimpleBot vs SimpleBot (baseline)</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Key Stats</h3>
+        <div id="stats" style="margin-top:8px"></div>
+      </div>
     </div>
   </div>
 
   <script>
-    // ── PARSE CSV ────────────────────────────────────────────
+    const TYPES   = ['V2_vs_Simple','Simple_vs_V2','V2_vs_V2','Simple_vs_Simple'];
+    const COLORS  = ['#4A9EFF','#FF5C5C','#4CAF50','#888888'];
+    const BUDGETS = [5,10,15,20,25,30,35,40,45,50,55,60,65,70,75,80,85,90,95,100];
+
     function parseCSV(text) {
-      const lines  = text.trim().split('\n');
-      const header = lines[0].split(',');
+      const lines = text.trim().split('\n');
       return lines.slice(1).map(line => {
-        const cols = line.split(',');
+        const c = line.split(',');
         return {
-          budget:   parseInt(cols[0]),
-          winner:   cols[1].trim(),
-          rounds:   parseInt(cols[2]),
-          blueComp: cols[3],
-          redComp:  cols[4]
+          matchType:  c[0].trim(),
+          budget:     parseInt(c[1]),
+          winner:     c[2].trim(),
+          rounds:     parseInt(c[3]),
+          blueHp:     parseInt(c[4]),
+          redHp:      parseInt(c[5]),
+          blueAlive:  parseInt(c[6]),
+          redAlive:   parseInt(c[7]),
+          blueComp:   c[8],
+          redComp:    c[9]
         };
       });
     }
 
-    // ── PROCESS DATA ─────────────────────────────────────────
+    function avg(arr) { return arr.length ? arr.reduce((s,v)=>s+v,0)/arr.length : 0; }
+
     function processData(rows) {
-      const budgets = [...new Set(rows.map(r => r.budget))].sort((a,b) => a-b);
+      const byType = {};
+      TYPES.forEach(t => byType[t] = rows.filter(r => r.matchType === t));
 
-      const blueWinByBudget  = {};
-      const redWinByBudget   = {};
-      const avgRoundsByBudget = {};
-
-      budgets.forEach(b => {
-        const group  = rows.filter(r => r.budget === b);
-        const blueW  = group.filter(r => r.winner === 'BLUE').length;
-        const redW   = group.filter(r => r.winner === 'RED').length;
-        const avgR   = group.reduce((s, r) => s + r.rounds, 0) / group.length;
-        blueWinByBudget[b]   = blueW;
-        redWinByBudget[b]    = redW;
-        avgRoundsByBudget[b] = parseFloat(avgR.toFixed(1));
+      // Win rates overall per type
+      const winRates = TYPES.map(t => {
+        const g = byType[t];
+        return g.length ? (g.filter(r => r.winner === 'BLUE').length / g.length * 100).toFixed(1) : 0;
       });
 
-      const totalBlue = rows.filter(r => r.winner === 'BLUE').length;
-      const totalRed  = rows.filter(r => r.winner === 'RED').length;
-      const avgRounds = (rows.reduce((s,r) => s + r.rounds, 0) / rows.length).toFixed(1);
-      const minRounds = Math.min(...rows.map(r => r.rounds));
-      const maxRounds = Math.max(...rows.map(r => r.rounds));
+      // Avg rounds per budget per type
+      const roundsByBudget = TYPES.map(t =>
+        BUDGETS.map(b => {
+          const g = byType[t].filter(r => r.budget === b);
+          return parseFloat(avg(g.map(r => r.rounds)).toFixed(1));
+        })
+      );
 
-      return { budgets, blueWinByBudget, redWinByBudget,
-               avgRoundsByBudget, totalBlue, totalRed,
-               total: rows.length, avgRounds, minRounds, maxRounds };
+      // Avg winner HP remaining per type
+      const avgWinnerHp = TYPES.map(t => {
+        const g = byType[t];
+        const hp = g.map(r => r.winner === 'BLUE' ? r.blueHp : r.redHp);
+        return parseFloat(avg(hp).toFixed(1));
+      });
+
+      // Avg survivors per type
+      const avgSurvivors = TYPES.map(t => {
+        const g = byType[t];
+        return parseFloat(avg(g.map(r =>
+          (r.winner === 'BLUE' ? r.blueAlive : r.redAlive)
+        )).toFixed(1));
+      });
+
+      // Win rate per budget for individual charts
+      const v2sWins    = BUDGETS.map(b => {
+        const g = byType['V2_vs_Simple'].filter(r=>r.budget===b);
+        return g.length ? (g.filter(r=>r.winner==='BLUE').length/g.length*100).toFixed(0) : 0;
+      });
+      const sv2Wins    = BUDGETS.map(b => {
+        const g = byType['Simple_vs_V2'].filter(r=>r.budget===b);
+        return g.length ? (g.filter(r=>r.winner==='BLUE').length/g.length*100).toFixed(0) : 0;
+      });
+      const v2v2Wins   = BUDGETS.map(b => {
+        const g = byType['V2_vs_V2'].filter(r=>r.budget===b);
+        return g.length ? (g.filter(r=>r.winner==='BLUE').length/g.length*100).toFixed(0) : 0;
+      });
+
+      return { byType, winRates, roundsByBudget, avgWinnerHp,
+               avgSurvivors, v2sWins, sv2Wins, v2v2Wins,
+               total: rows.length };
     }
 
-    // ── RENDER CHARTS ────────────────────────────────────────
+    const cfg = (type, data, opts={}) => ({ type, data, options: {
+      responsive:true, plugins:{ legend:{ labels:{ color:'#ccc', font:{size:11} } } },
+      scales: type !== 'doughnut' && type !== 'pie' ? {
+        x:{ ticks:{color:'#888'}, grid:{color:'#2a2d3a'} },
+        y:{ ticks:{color:'#888'}, grid:{color:'#2a2d3a'}, ...opts }
+      } : undefined
+    }});
+
     function renderCharts(d) {
-      const labels = d.budgets;
-      const blueData = labels.map(b => d.blueWinByBudget[b]);
-      const redData  = labels.map(b => d.redWinByBudget[b]);
-      const roundData = labels.map(b => d.avgRoundsByBudget[b]);
+      // Chart 1: Win rate by match type (bar)
+      new Chart(document.getElementById('winByType'), cfg('bar', {
+        labels: ['V2_vs_Simple','Simple_vs_V2','V2_vs_V2','Simple_vs_Simple'],
+        datasets: [{ label: 'BLUE Win Rate (%)', data: d.winRates,
+          backgroundColor: COLORS, borderRadius: 4 }]
+      }, { max:100 }));
 
-      // Chart 1: Doughnut win rate
-      new Chart(document.getElementById('winRate'), {
-        type: 'doughnut',
-        data: {
-          labels: [`BLUE (${d.totalBlue})`, `RED (${d.totalRed})`],
-          datasets: [{ data: [d.totalBlue, d.totalRed],
-            backgroundColor: ['#4A9EFF','#FF5C5C'], borderWidth: 0 }]
-        },
-        options: { plugins: { legend: { labels: { color: '#ccc', font: { size: 13 } } } } }
-      });
+      // Chart 2: Avg rounds by budget (multi-line)
+      new Chart(document.getElementById('roundsByBudget'), cfg('line', {
+        labels: BUDGETS,
+        datasets: TYPES.map((t,i) => ({
+          label: t, data: d.roundsByBudget[i],
+          borderColor: COLORS[i], backgroundColor: 'transparent',
+          tension: 0.3, pointRadius: 2
+        }))
+      }));
 
-      // Chart 2: Line avg rounds
-      new Chart(document.getElementById('rounds'), {
-        type: 'line',
-        data: {
-          labels,
-          datasets: [{ label: 'Avg Rounds', data: roundData,
-            borderColor: '#A78BFA', backgroundColor: 'rgba(167,139,250,0.1)',
-            fill: true, tension: 0.3, pointRadius: 3 }]
-        },
-        options: {
-          plugins: { legend: { labels: { color: '#ccc' } } },
-          scales: {
-            x: { ticks: { color: '#888' }, grid: { color: '#2a2d3a' } },
-            y: { ticks: { color: '#888' }, grid: { color: '#2a2d3a' }, min: 0 }
-          }
-        }
-      });
+      // Chart 3: Avg winner HP remaining
+      new Chart(document.getElementById('hpRemaining'), cfg('bar', {
+        labels: TYPES,
+        datasets: [{ label: 'Avg Winner HP', data: d.avgWinnerHp,
+          backgroundColor: COLORS, borderRadius: 4 }]
+      }));
 
-      // Chart 3: Stacked bar win by budget
-      new Chart(document.getElementById('budgetWin'), {
-        type: 'bar',
-        data: {
-          labels,
-          datasets: [
-            { label: 'BLUE', data: blueData, backgroundColor: '#4A9EFF' },
-            { label: 'RED',  data: redData,  backgroundColor: '#FF5C5C' }
-          ]
-        },
-        options: {
-          plugins: { legend: { labels: { color: '#ccc' } } },
-          scales: {
-            x: { stacked: true, ticks: { color: '#888' }, grid: { color: '#2a2d3a' } },
-            y: { stacked: true, ticks: { color: '#888' }, grid: { color: '#2a2d3a' } }
-          }
-        }
-      });
+      // Chart 4: Avg survivors
+      new Chart(document.getElementById('survivors'), cfg('bar', {
+        labels: TYPES,
+        datasets: [{ label: 'Avg Survivors', data: d.avgSurvivors,
+          backgroundColor: COLORS, borderRadius: 4 }]
+      }, { max:8 }));
+
+      // Chart 5: V2 vs Simple win rate by budget
+      new Chart(document.getElementById('v2simple'), cfg('bar', {
+        labels: BUDGETS,
+        datasets: [
+          { label: 'BLUE (V2) Win %', data: d.v2sWins, backgroundColor: '#4A9EFF', borderRadius:2 },
+        ]
+      }, { max:100 }));
+
+      // Chart 6: Simple vs V2
+      new Chart(document.getElementById('simplev2'), cfg('bar', {
+        labels: BUDGETS,
+        datasets: [
+          { label: 'BLUE (Simple) Win %', data: d.sv2Wins, backgroundColor: '#FF5C5C', borderRadius:2 }
+        ]
+      }, { max:100 }));
+
+      // Chart 7: V2 vs V2
+      new Chart(document.getElementById('v2v2'), cfg('bar', {
+        labels: BUDGETS,
+        datasets: [
+          { label: 'BLUE Win %', data: d.v2v2Wins, backgroundColor: '#4CAF50', borderRadius:2 }
+        ]
+      }, { max:100 }));
 
       // Stats panel
-      const blueRate = ((d.totalBlue / d.total) * 100).toFixed(0);
-      const redRate  = ((d.totalRed  / d.total) * 100).toFixed(0);
+      const v2s  = d.byType['V2_vs_Simple'];
+      const sv2  = d.byType['Simple_vs_V2'];
+      const v2v2 = d.byType['V2_vs_V2'];
+      const ss   = d.byType['Simple_vs_Simple'];
+      const wr   = (arr, side) => (arr.filter(r=>r.winner===side).length/arr.length*100).toFixed(0);
+
       document.getElementById('stats').innerHTML = `
         <div class="stat-row"><span>Total matches</span><span class="stat-val">${d.total}</span></div>
-        <div class="stat-row"><span>BLUE win rate</span><span class="stat-val">${blueRate}%</span></div>
-        <div class="stat-row"><span>RED win rate</span><span class="stat-val">${redRate}%</span></div>
-        <div class="stat-row"><span>Avg rounds</span><span class="stat-val">${d.avgRounds}</span></div>
-        <div class="stat-row"><span>Fastest game</span><span class="stat-val">${d.minRounds} rounds</span></div>
-        <div class="stat-row"><span>Longest game</span><span class="stat-val">${d.maxRounds} rounds</span></div>
-        <div class="stat-row"><span>BFS complexity</span><span class="stat-val">O(V+E) = O(256)</span></div>
-        <div class="stat-row"><span>Greedy vs brute</span><span class="stat-val">O(n log n) vs O(2ⁿ)</span></div>
+        <div class="stat-row"><span>V2_vs_Simple — V2 win rate</span><span class="stat-val">${wr(v2s,'BLUE')}%</span></div>
+        <div class="stat-row"><span>Simple_vs_V2 — V2 win rate</span><span class="stat-val">${wr(sv2,'RED')}%</span></div>
+        <div class="stat-row"><span>V2_vs_V2 — BLUE win rate</span><span class="stat-val">${wr(v2v2,'BLUE')}%</span></div>
+        <div class="stat-row"><span>Simple_vs_Simple — BLUE</span><span class="stat-val">${wr(ss,'BLUE')}%</span></div>
+        <div class="stat-row"><span>BFS complexity</span><span class="stat-val">O(V+E)=O(256)</span></div>
+        <div class="stat-row"><span>Greedy vs brute force</span><span class="stat-val">O(n log n) vs O(2ⁿ)</span></div>
       `;
     }
 
-    // ── MAIN: FETCH CSV ──────────────────────────────────────
     fetch('match_results.csv')
-      .then(r => {
-        if (!r.ok) throw new Error('CSV not found');
-        return r.text();
-      })
+      .then(r => { if (!r.ok) throw new Error(); return r.text(); })
       .then(text => {
         const rows = parseCSV(text);
         const data = processData(rows);
         document.getElementById('loading').style.display = 'none';
-        document.getElementById('dashboard').style.display = 'grid';
+        document.getElementById('dashboard').style.display = 'block';
         document.getElementById('subtitle').textContent =
-          `Loaded ${data.total} matches from match_results.csv · Budget 5–100`;
+          `Loaded ${data.total} matches · 4 matchup types · Budget 5–100`;
         renderCharts(data);
       })
-      .catch(err => {
+      .catch(() => {
         document.getElementById('loading').textContent =
-          'Không tìm thấy match_results.csv — chạy TournamentRunner trước!';
+          'match_results.csv not found — run TournamentRunner first!';
       });
   </script>
 </body>
