@@ -17,7 +17,12 @@ public class BattleEngine {
         this.redBot  = redBot;
     }
 
+    // Overload: backward compatible
     public MatchResult runMatch(int budget) {
+        return runMatch(budget, "Unknown");
+    }
+
+    public MatchResult runMatch(int budget, String matchType) {
         Grid grid = new Grid();
 
         // ── DRAFT ────────────────────────────────────────────────
@@ -52,20 +57,17 @@ public class BattleEngine {
         // ── BATTLE ───────────────────────────────────────────────
         for (int round = 1; round <= MAX_ROUNDS; round++) {
 
-            // Priority Queue: sort by SPD — O(log n) per insert/extract
             PriorityQueue<Champion> turnOrder = new PriorityQueue<>(
                 Comparator.comparingInt(Champion::getSpeed).reversed()
             );
             blueTeam.stream().filter(Champion::isAlive).forEach(turnOrder::add);
             redTeam.stream().filter(Champion::isAlive).forEach(turnOrder::add);
 
-            // Get actions from each bot
             List<BotAction> blueActions = blueBot.playTurn(
                 aliveOnly(blueTeam), aliveOnly(redTeam), grid, round);
             List<BotAction> redActions  = redBot.playTurn(
                 aliveOnly(redTeam), aliveOnly(blueTeam), grid, round);
 
-            // Execute actions in SPD order
             Map<String, BotAction> actionMap = new HashMap<>();
             for (BotAction a : blueActions) actionMap.put(a.championId, a);
             for (BotAction a : redActions)  actionMap.put(a.championId, a);
@@ -74,38 +76,55 @@ public class BattleEngine {
                 Champion actor = turnOrder.poll();
                 if (!actor.isAlive()) continue;
                 BotAction action = actionMap.get(actor.getId());
-                if (action != null) executeAction(actor, action, blueTeam, redTeam, grid);
+                if (action != null)
+                    executeAction(actor, action, blueTeam, redTeam, grid);
             }
 
-            // Gain mana + tick cooldown each round
             blueTeam.forEach(c -> { if (c.isAlive()) { c.gainMana(2); c.tickCooldown(); } });
             redTeam.forEach(c  -> { if (c.isAlive()) { c.gainMana(2); c.tickCooldown(); } });
 
-            // Check win condition
             boolean blueAlive = blueTeam.stream().anyMatch(Champion::isAlive);
             boolean redAlive  = redTeam.stream().anyMatch(Champion::isAlive);
 
             if (!blueAlive || !redAlive) {
                 String winner = blueAlive ? "BLUE" : "RED";
-                return new MatchResult(winner, round, budget,
-                    String.join("+", blueDraft),
-                    String.join("+", redDraft));
+                return buildResult(matchType, winner, round, budget,
+                                   blueTeam, redTeam, blueDraft, redDraft);
             }
         }
 
-        // Round limit: winner by remaining HP
+        // Round limit — winner by HP
         int blueHp = blueTeam.stream().filter(Champion::isAlive)
                               .mapToInt(Champion::getHp).sum();
         int redHp  = redTeam.stream().filter(Champion::isAlive)
                              .mapToInt(Champion::getHp).sum();
         String winner = blueHp >= redHp ? "BLUE" : "RED";
-        return new MatchResult(winner, MAX_ROUNDS, budget,
-            String.join("+", blueDraft),
-            String.join("+", redDraft));
+        return buildResult(matchType, winner, MAX_ROUNDS, budget,
+                           blueTeam, redTeam, blueDraft, redDraft);
+    }
+
+    private MatchResult buildResult(String matchType, String winner,
+                                     int rounds, int budget,
+                                     List<Champion> blueTeam,
+                                     List<Champion> redTeam,
+                                     List<String> blueDraft,
+                                     List<String> redDraft) {
+        int blueHp    = blueTeam.stream().filter(Champion::isAlive)
+                                 .mapToInt(Champion::getHp).sum();
+        int redHp     = redTeam.stream().filter(Champion::isAlive)
+                                .mapToInt(Champion::getHp).sum();
+        int blueAlive = (int) blueTeam.stream().filter(Champion::isAlive).count();
+        int redAlive  = (int) redTeam.stream().filter(Champion::isAlive).count();
+
+        return new MatchResult(matchType, winner, rounds, budget,
+                               blueHp, redHp, blueAlive, redAlive,
+                               String.join("+", blueDraft),
+                               String.join("+", redDraft));
     }
 
     private void executeAction(Champion actor, BotAction action,
-                                List<Champion> blueTeam, List<Champion> redTeam,
+                                List<Champion> blueTeam,
+                                List<Champion> redTeam,
                                 Grid grid) {
         switch (action.type) {
             case MOVE:
@@ -115,31 +134,23 @@ public class BattleEngine {
                     actor.setPosition(action.targetPosition);
                 }
                 break;
-
             case ATTACK:
                 Champion target = findById(action.targetChampionId,
                                            blueTeam, redTeam);
-                if (target != null && target.isAlive()) {
+                if (target != null && target.isAlive())
                     target.takeDamage(actor.getAttack());
-                }
                 break;
-
             case CAST_SKILL:
                 if (actor.getMana() >= actor.getSkillManaCost()
                         && actor.getRemainingCooldown() == 0) {
                     actor.useSkill();
                     Champion skillTarget = findById(action.targetChampionId,
                                                     blueTeam, redTeam);
-                    if (skillTarget != null && skillTarget.isAlive()) {
+                    if (skillTarget != null && skillTarget.isAlive())
                         skillTarget.takeDamage(actor.getAttack() + 2);
-                    }
                 }
                 break;
-
-            case WAIT:
-            case DEFEND:
-            default:
-                break;
+            default: break;
         }
     }
 
@@ -151,9 +162,9 @@ public class BattleEngine {
     }
 
     private List<Champion> aliveOnly(List<Champion> list) {
-        List<Champion> result = new ArrayList<>();
-        for (Champion c : list) if (c.isAlive()) result.add(c);
-        return result;
+        List<Champion> out = new ArrayList<>();
+        for (Champion c : list) if (c.isAlive()) out.add(c);
+        return out;
     }
 
     private List<Position> getAllowedCells(String side) {
