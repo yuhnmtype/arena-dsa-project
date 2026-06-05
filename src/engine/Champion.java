@@ -87,4 +87,16 @@ public class Champion {
     public String toString() {
         return id + "[" + teamSide + "] HP:" + hp + "/" + maxHp;
     }
+
+    public Champion copy() {
+        Champion c = new Champion(
+            this.id, this.teamSide, this.cost,
+            this.maxHp, this.attack, this.defense,
+            this.range, this.moveRange, this.speed,
+            this.maxMana, this.skillManaCost, this.skillCooldown
+        );
+        c.setPosition(this.position);
+        return c;
+    }
+
 }
