@@ -54,8 +54,10 @@ public class TurnOrderPanel extends JPanel {
         if (log.initialRedTeam != null)
             all.addAll(log.initialRedTeam);
 
-        // Sort by SPD descending
-        all.sort((a, b) -> b.getSpeed() - a.getSpeed());
+        // Sort by SPD descending; BLUE acts first on ties (matches engine comparator).
+        all.sort((a, b) -> b.getSpeed() != a.getSpeed()
+                ? b.getSpeed() - a.getSpeed()
+                : (a.getTeamSide().equals("BLUE") ? 0 : 1) - (b.getTeamSide().equals("BLUE") ? 0 : 1));
 
         listPanel.removeAll();
 
