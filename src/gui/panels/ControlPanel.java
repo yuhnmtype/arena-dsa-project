@@ -1,9 +1,9 @@
 package gui.panels;
 
 import gui.core.ReplayController;
+import java.awt.*;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
-import java.awt.*;
 
 public class ControlPanel extends JPanel {
 
@@ -14,6 +14,8 @@ public class ControlPanel extends JPanel {
     private JButton btnNext;
     private JButton btnAuto;
     private JButton btnPause;
+    private JButton btnResults;
+    private JButton btnNewMatch;
     private JSlider speedSlider;
     private JLabel labelStep;
     private JLabel labelRound;
@@ -29,28 +31,54 @@ public class ControlPanel extends JPanel {
     }
 
     private void buildUI() {
-        // ── Labels ──────────────────────────────────
-        labelStep = makeLabel("Step: 0 / 0", Color.WHITE, 13);
-        labelRound = makeLabel("Round: — / 40", new Color(100, 200, 255), 13);
-        labelAction = makeLabel("Action: —", new Color(200, 200, 200), 12);
+        // ── Labels ──────────────────────────────────────────
+        labelStep   = makeLabel("Step: 0 / 0",       Color.WHITE,              13);
+        labelRound  = makeLabel("Round: — / 40",      new Color(100, 200, 255), 13);
+        labelAction = makeLabel("Action: —",           new Color(200, 200, 200), 12);
 
-        // ── Buttons ─────────────────────────────────
-        btnReset = makeButton("◀◀ Reset", new Color(80, 80, 100));
-        btnPrev  = makeButton("◀ Prev",  new Color(60, 100, 140));
-        btnNext  = makeButton("Next ▶",  new Color(60, 140, 100));
-        btnAuto  = makeButton("Auto ▶▶", new Color(140, 100, 60));
-        btnPause = makeButton("⏸ Pause", new Color(140, 60, 60));
+        // ── Playback buttons ─────────────────────────────────
+        btnReset   = makeButton("◀◀ Reset",   new Color(80,  80,  100));
+        btnPrev    = makeButton("◀ Prev",     new Color(60,  100, 140));
+        btnNext    = makeButton("Next ▶",     new Color(60,  140, 100));
+        btnAuto    = makeButton("Auto ▶▶",    new Color(140, 100, 60));
+        btnPause   = makeButton("⏸ Pause",    new Color(140, 60,  60));
 
         btnReset.addActionListener(e -> controller.reset());
-        btnPrev.addActionListener(e  -> controller.prev());
-        btnNext.addActionListener(e  -> controller.next());
-        btnAuto.addActionListener(e  -> controller.auto());
+        btnPrev .addActionListener(e -> controller.prev());
+        btnNext .addActionListener(e -> controller.next());
+        btnAuto .addActionListener(e -> controller.auto());
         btnPause.addActionListener(e -> controller.pause());
 
-        // ── Speed slider ────────────────────────────
-        JLabel labelSpeed = makeLabel("Speed:", new Color(180, 180, 180), 12);
-        JLabel labelSlow  = makeLabel("Slow", new Color(150,150,150), 11);
-        JLabel labelFast  = makeLabel("Fast", new Color(150,150,150), 11);
+        // ── Utility buttons ──────────────────────────────────
+        btnResults  = makeButton("📊 Results",  new Color(80,  60,  140));
+        btnNewMatch = makeButton("🔄 New Match", new Color(30,  100, 130));
+
+        // Show EndMatchPanel with cost breakdown
+        btnResults.addActionListener(e -> {
+            JFrame frame = (JFrame) SwingUtilities.getWindowAncestor(ControlPanel.this);
+            EndMatchPanel.show(frame, controller.getLog());
+        });
+
+        // Close GameWindow → reopen setup dialog with new budget
+        btnNewMatch.addActionListener(e -> {
+            int confirm = JOptionPane.showConfirmDialog(
+                ControlPanel.this,
+                "Close this match and start a new one?",
+                "New Match",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.QUESTION_MESSAGE
+            );
+            if (confirm == JOptionPane.YES_OPTION) {
+                JFrame frame = (JFrame) SwingUtilities.getWindowAncestor(ControlPanel.this);
+                if (frame != null) frame.dispose();
+                runner.GUIRunner.showSetup();
+            }
+        });
+
+        // ── Speed slider ─────────────────────────────────────
+        JLabel labelSpeed = makeLabel("Speed:",  new Color(180, 180, 180), 12);
+        JLabel labelSlow  = makeLabel("Slow",    new Color(150, 150, 150), 11);
+        JLabel labelFast  = makeLabel("Fast",    new Color(150, 150, 150), 11);
 
         speedSlider = new JSlider(100, 1500, 800);
         speedSlider.setInverted(true); // left = fast, right = slow
@@ -59,7 +87,7 @@ public class ControlPanel extends JPanel {
             controller.setSpeed(speedSlider.getValue())
         );
 
-        // ── Button row ──────────────────────────────
+        // ── Playback button row ──────────────────────────────
         JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 6, 0));
         btnPanel.setBackground(new Color(20, 20, 35));
         btnPanel.add(btnReset);
@@ -68,7 +96,13 @@ public class ControlPanel extends JPanel {
         btnPanel.add(btnAuto);
         btnPanel.add(btnPause);
 
-        // ── Speed row ───────────────────────────────
+        // ── Utility button row ────────────────────────────────
+        JPanel utilPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 6, 0));
+        utilPanel.setBackground(new Color(20, 20, 35));
+        utilPanel.add(btnResults);
+        utilPanel.add(btnNewMatch);
+
+        // ── Speed row ────────────────────────────────────────
         JPanel speedPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0));
         speedPanel.setBackground(new Color(20, 20, 35));
         speedPanel.add(labelSpeed);
@@ -76,7 +110,7 @@ public class ControlPanel extends JPanel {
         speedPanel.add(speedSlider);
         speedPanel.add(labelFast);
 
-        // ── Add all ─────────────────────────────────
+        // ── Add all ──────────────────────────────────────────
         add(Box.createVerticalStrut(6));
         add(center(labelStep));
         add(Box.createVerticalStrut(4));
@@ -85,6 +119,8 @@ public class ControlPanel extends JPanel {
         add(center(labelAction));
         add(Box.createVerticalStrut(10));
         add(btnPanel);
+        add(Box.createVerticalStrut(6));
+        add(utilPanel);
         add(Box.createVerticalStrut(8));
         add(speedPanel);
         add(Box.createVerticalStrut(6));
@@ -101,7 +137,7 @@ public class ControlPanel extends JPanel {
         });
     }
 
-    // ── Helpers ─────────────────────────────────────────────────
+    // ── Helpers ──────────────────────────────────────────────
     private JButton makeButton(String text, Color bg) {
         JButton btn = new JButton(text);
         btn.setBackground(bg);

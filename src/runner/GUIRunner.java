@@ -15,10 +15,11 @@ public class GUIRunner {
         javax.swing.SwingUtilities.invokeLater(() -> showSetup());
     }
 
-    private static void showSetup() {
+    // public so ControlPanel's "New Match" can call it
+    public static void showSetup() {
         JDialog dialog = new JDialog();
         dialog.setTitle("Arena Bot Simulator");
-        dialog.setSize(420, 320);
+        dialog.setSize(440, 360);
         dialog.setLocationRelativeTo(null);
         dialog.setModal(true);
         dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
@@ -28,7 +29,7 @@ public class GUIRunner {
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
         panel.setBorder(new EmptyBorder(20, 30, 20, 30));
 
-        // Title
+        // ── Title ────────────────────────────────────────────
         JLabel title = new JLabel("ARENA BOT SIMULATOR");
         title.setForeground(new Color(100, 180, 255));
         title.setFont(new Font("Arial", Font.BOLD, 18));
@@ -39,7 +40,7 @@ public class GUIRunner {
         subtitle.setFont(new Font("Arial", Font.PLAIN, 12));
         subtitle.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        // Matchup dropdown
+        // ── Matchup dropdown ──────────────────────────────────
         JLabel lblType = makeLabel("Matchup Type:");
         String[] types = {
             "V2_vs_Simple  (StudentBotV2 vs SimpleBot)",
@@ -51,13 +52,16 @@ public class GUIRunner {
         styleDropdown(dropdown);
         dropdown.setMaximumSize(new Dimension(Integer.MAX_VALUE, 32));
 
-        // Budget slider
+        // ── Budget section ────────────────────────────────────
         JLabel lblBudget = makeLabel("Gold Budget:");
+
+        // Value display (big green number)
         JLabel budgetVal = new JLabel("20");
         budgetVal.setForeground(new Color(100, 220, 100));
-        budgetVal.setFont(new Font("Arial", Font.BOLD, 16));
+        budgetVal.setFont(new Font("Arial", Font.BOLD, 18));
         budgetVal.setAlignmentX(Component.CENTER_ALIGNMENT);
 
+        // Slider
         JSlider slider = new JSlider(5, 100, 20);
         slider.setBackground(new Color(20, 20, 35));
         slider.setForeground(new Color(150, 150, 150));
@@ -66,11 +70,45 @@ public class GUIRunner {
         slider.setPaintTicks(true);
         slider.setPaintLabels(true);
         slider.setMaximumSize(new Dimension(Integer.MAX_VALUE, 55));
-        slider.addChangeListener(e ->
-            budgetVal.setText(String.valueOf(slider.getValue()))
-        );
 
-        // Run button
+        // Spinner for precise input
+        SpinnerNumberModel spinnerModel = new SpinnerNumberModel(20, 5, 100, 1);
+        JSpinner budgetSpinner = new JSpinner(spinnerModel);
+        budgetSpinner.setMaximumSize(new Dimension(80, 32));
+        budgetSpinner.setPreferredSize(new Dimension(80, 32));
+        ((JSpinner.DefaultEditor) budgetSpinner.getEditor())
+            .getTextField().setFont(new Font("Arial", Font.BOLD, 14));
+        ((JSpinner.DefaultEditor) budgetSpinner.getEditor())
+            .getTextField().setForeground(new Color(100, 220, 100));
+        ((JSpinner.DefaultEditor) budgetSpinner.getEditor())
+            .getTextField().setBackground(new Color(30, 35, 50));
+        budgetSpinner.setBackground(new Color(30, 35, 50));
+
+        // ── Sync slider ↔ spinner ↔ big label ────────────────
+        slider.addChangeListener(e -> {
+            int v = slider.getValue();
+            budgetVal.setText(String.valueOf(v));
+            if ((int) spinnerModel.getValue() != v)
+                spinnerModel.setValue(v);
+        });
+        spinnerModel.addChangeListener(e -> {
+            int v = (int) spinnerModel.getValue();
+            budgetVal.setText(String.valueOf(v));
+            if (slider.getValue() != v)
+                slider.setValue(v);
+        });
+
+        // Budget control row: label + spinner
+        JPanel budgetCtrlRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        budgetCtrlRow.setBackground(new Color(20, 20, 35));
+        budgetCtrlRow.add(makeLabel("Budget:"));
+        budgetCtrlRow.add(budgetVal);
+        budgetCtrlRow.add(Box.createHorizontalStrut(12));
+        budgetCtrlRow.add(makeLabel("Manual input:"));
+        budgetCtrlRow.add(budgetSpinner);
+        budgetCtrlRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
+
+        // ── Run button ────────────────────────────────────────
         JButton btnRun = new JButton("▶  Run Match");
         btnRun.setBackground(new Color(40, 140, 80));
         btnRun.setForeground(Color.WHITE);
@@ -116,7 +154,7 @@ public class GUIRunner {
             worker.execute();
         });
 
-        // Layout
+        // ── Layout ────────────────────────────────────────────
         panel.add(title);
         panel.add(Box.createVerticalStrut(4));
         panel.add(subtitle);
@@ -125,9 +163,8 @@ public class GUIRunner {
         panel.add(Box.createVerticalStrut(6));
         panel.add(dropdown);
         panel.add(Box.createVerticalStrut(14));
-        panel.add(lblBudget);
+        panel.add(budgetCtrlRow);
         panel.add(Box.createVerticalStrut(4));
-        panel.add(budgetVal);
         panel.add(slider);
         panel.add(Box.createVerticalStrut(16));
         panel.add(btnRun);
