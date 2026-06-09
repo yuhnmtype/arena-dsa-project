@@ -187,9 +187,7 @@ public class BattleEngine {
                 }
 
                 // Extract template name
-                String[] parts = actor.getId().split("_");
-                String name = parts.length >= 2
-                    ? parts[parts.length - 2] : actor.getId();
+                String name = templateName(actor.getId());
                 String team = actor.getId().startsWith("BLUE") ? "BLUE" : "RED";
 
                 log.add(new BattleLogEntry(
@@ -319,4 +317,16 @@ public class BattleEngine {
         }
         return cells;
     }
+
+    private static String templateName(String id) {
+        if (id == null) return "";
+        String t = id;
+        if (t.startsWith("BLUE_"))      t = t.substring(5);
+        else if (t.startsWith("RED_"))  t = t.substring(4);
+        int u = t.lastIndexOf('_');
+        if (u > 0 && t.substring(u + 1).matches("\\d+"))
+            t = t.substring(0, u);
+        return t.isEmpty() ? id : t;
+    }
+
 }

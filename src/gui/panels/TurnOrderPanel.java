@@ -4,11 +4,11 @@ import engine.BattleLog;
 import engine.BattleLogEntry;
 import engine.Champion;
 import gui.core.ReplayController;
-import javax.swing.*;
-import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.util.*;
 import java.util.List;
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
 
 public class TurnOrderPanel extends JPanel {
 
@@ -60,8 +60,7 @@ public class TurnOrderPanel extends JPanel {
         listPanel.removeAll();
 
         for (Champion c : all) {
-            String[] parts = c.getId().split("_");
-            String name = parts.length >= 2 ? parts[parts.length - 2] : c.getId();
+            String name = templateName(c.getId());
             String team = c.getId().startsWith("BLUE") ? "BLUE" : "RED";
             boolean isActing = c.getId().equals(currentActingId);
 
@@ -110,5 +109,16 @@ public class TurnOrderPanel extends JPanel {
         row.add(spdLabel, BorderLayout.EAST);
 
         return row;
+    }
+
+    private static String templateName(String id) {
+        if (id == null) return "";
+        String t = id;
+        if (t.startsWith("BLUE_"))      t = t.substring(5);
+        else if (t.startsWith("RED_"))  t = t.substring(4);
+        int u = t.lastIndexOf('_');
+        if (u > 0 && t.substring(u + 1).matches("\\d+"))
+            t = t.substring(0, u);
+        return t.isEmpty() ? id : t;
     }
 }
