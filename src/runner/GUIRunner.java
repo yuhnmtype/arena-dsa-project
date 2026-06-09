@@ -8,7 +8,6 @@ import gui.core.GameWindow;
 
 public class GUIRunner {
     public static void main(String[] args) {
-        // Test với budget=20, V2 vs Simple
         BattleEngine engine = new BattleEngine(
             new StudentBotV2(),
             new SimpleBot()
@@ -17,8 +16,8 @@ public class GUIRunner {
         BattleLog log = engine.runMatchWithLog(20, "V2_vs_Simple");
         System.out.println("Log loaded: " + log.totalSteps() + " steps");
         System.out.println("Winner: " + log.winner);
+        System.out.println("Rounds: " + log.totalRounds);
 
-        // Mở GUI
         javax.swing.SwingUtilities.invokeLater(() -> {
             GameWindow window = new GameWindow(log);
             window.setVisible(true);
