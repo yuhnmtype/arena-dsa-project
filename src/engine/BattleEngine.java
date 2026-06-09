@@ -1,5 +1,6 @@
 package engine;
 
+import bot.BFSPathfinder;
 import bot.BotAction;
 import bot.IBotAI;
 import java.util.*;
@@ -17,7 +18,6 @@ public class BattleEngine {
         this.redBot  = redBot;
     }
 
-    // ── Overload backward compatible ─────────────────────────────
     public MatchResult runMatch(int budget) {
         return runMatch(budget, "Unknown");
     }
@@ -154,10 +154,10 @@ public class BattleEngine {
                 if (action == null) continue;
 
                 // Snapshot before
-                int hpBefore     = actor.getHp();
-                int manaBefore   = actor.getMana();
-                Position fromPos = actor.getPosition();
-                String targetId  = action.targetChampionId;
+                int hpBefore       = actor.getHp();
+                int manaBefore     = actor.getMana();
+                Position fromPos   = actor.getPosition();
+                String targetId    = action.targetChampionId;
                 int targetHpBefore = -1;
                 Champion targetChamp = findById(targetId, blueTeam, redTeam);
                 if (targetChamp != null) targetHpBefore = targetChamp.getHp();
@@ -178,9 +178,18 @@ public class BattleEngine {
                 redTeam.stream().filter(Champion::isAlive)
                        .forEach(c -> snap.add(c.getPosition()));
 
+                // ── BFS path for MOVE actions ─────────────────
+                List<Position> bfsPath = new ArrayList<>();
+                if (action.type == BotAction.Type.MOVE
+                        && fromPos != null && toPos != null
+                        && !fromPos.equals(toPos)) {
+                    bfsPath = BFSPathfinder.findPath(fromPos, toPos, grid, snap);
+                }
+
                 // Extract template name
                 String[] parts = actor.getId().split("_");
-                String name = parts.length >= 2 ? parts[parts.length - 2] : actor.getId();
+                String name = parts.length >= 2
+                    ? parts[parts.length - 2] : actor.getId();
                 String team = actor.getId().startsWith("BLUE") ? "BLUE" : "RED";
 
                 log.add(new BattleLogEntry(
@@ -190,7 +199,7 @@ public class BattleEngine {
                     hpBefore, hpAfter,
                     manaBefore, manaAfter,
                     targetId, targetHpBefore, targetHpAfter,
-                    null, snap
+                    bfsPath, snap   // ← bfsPath thay vì null
                 ));
             }
 
@@ -233,8 +242,10 @@ public class BattleEngine {
                                  .mapToInt(Champion::getHp).sum();
         int redHp     = redTeam.stream().filter(Champion::isAlive)
                                 .mapToInt(Champion::getHp).sum();
-        int blueAlive = (int) blueTeam.stream().filter(Champion::isAlive).count();
-        int redAlive  = (int) redTeam.stream().filter(Champion::isAlive).count();
+        int blueAlive = (int) blueTeam.stream()
+                                       .filter(Champion::isAlive).count();
+        int redAlive  = (int) redTeam.stream()
+                                      .filter(Champion::isAlive).count();
         return new MatchResult(matchType, winner, rounds, budget,
                                blueHp, redHp, blueAlive, redAlive,
                                String.join("+", blueDraft),
