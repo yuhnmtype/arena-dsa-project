@@ -58,7 +58,10 @@ public class GamePanel extends JPanel implements ReplayController.StepListener {
 
     public GamePanel(ReplayController controller) {
         this.log = controller.getLog();
-        setPreferredSize(new Dimension(GRID * CELL, GRID * CELL));
+        Dimension boardSize = new Dimension(GRID * CELL, GRID * CELL);
+        setPreferredSize(boardSize);
+        setMinimumSize(boardSize);
+        setMaximumSize(boardSize);
         setBackground(new Color(28, 30, 40));
         controller.addListener(this);
         rebuildState(0);
