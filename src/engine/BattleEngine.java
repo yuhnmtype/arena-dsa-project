@@ -53,8 +53,10 @@ public class BattleEngine {
         }
 
         for (int round = 1; round <= MAX_ROUNDS; round++) {
+            // Speed desc; BLUE acts first on ties (teacher requirement).
             PriorityQueue<Champion> turnOrder = new PriorityQueue<>(
                 Comparator.comparingInt(Champion::getSpeed).reversed()
+                    .thenComparing(c -> c.getTeamSide().equals("BLUE") ? 0 : 1)
             );
             blueTeam.stream().filter(Champion::isAlive).forEach(turnOrder::add);
             redTeam.stream().filter(Champion::isAlive).forEach(turnOrder::add);
@@ -132,8 +134,10 @@ public class BattleEngine {
         log.initialRedTeam  = deepCopy(redTeam);
 
         for (int round = 1; round <= MAX_ROUNDS; round++) {
+            // Speed desc; BLUE acts first on ties (teacher requirement).
             PriorityQueue<Champion> turnOrder = new PriorityQueue<>(
                 Comparator.comparingInt(Champion::getSpeed).reversed()
+                    .thenComparing(c -> c.getTeamSide().equals("BLUE") ? 0 : 1)
             );
             blueTeam.stream().filter(Champion::isAlive).forEach(turnOrder::add);
             redTeam.stream().filter(Champion::isAlive).forEach(turnOrder::add);
@@ -271,8 +275,10 @@ public class BattleEngine {
             case ATTACK:
                 Champion target = findById(action.targetChampionId,
                                            blueTeam, redTeam);
-                if (target != null && target.isAlive())
+                if (target != null && target.isAlive()) {
                     target.takeDamage(actor.getAttack());
+                    if (!target.isAlive()) grid.vacate(target.getPosition());
+                }
                 break;
             case CAST_SKILL:
                 if (actor.getMana() >= actor.getSkillManaCost()
@@ -280,8 +286,10 @@ public class BattleEngine {
                     actor.useSkill();
                     Champion skillTarget = findById(action.targetChampionId,
                                                     blueTeam, redTeam);
-                    if (skillTarget != null && skillTarget.isAlive())
+                    if (skillTarget != null && skillTarget.isAlive()) {
                         skillTarget.takeDamage(actor.getAttack() + 2);
+                        if (!skillTarget.isAlive()) grid.vacate(skillTarget.getPosition());
+                    }
                 }
                 break;
             default:

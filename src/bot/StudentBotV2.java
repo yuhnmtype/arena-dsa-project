@@ -4,32 +4,22 @@ import engine.Champion;
 import engine.ChampionFactory;
 import engine.Grid;
 import engine.Position;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Queue;
 import java.util.Set;
 
 /**
- * StudentBotV2 - optimized bot with BFS pathfinding.
+ * StudentBotV2 — optimised 3-phase bot (Draft → Place → Battle).
  *
- * DSA components used:
- *   draftTeam  : greedy selection by value-per-gold, O(n log n)
- *   BFSPathfinder.advanceToward : breadth-first search around obstacles, O(V + E)
- *   occupied   : HashSet membership test, O(1) per lookup
- *   turn loop  : linear scan of allies, O(n)
- *
- * Movement note for THIS engine: BattleEngine executes a MOVE by teleporting the
- * champion straight to the requested cell as long as it is in bounds and not
- * occupied (Grid.isValid). There is no per-turn move-range cap. A naive bot that
- * steps one tile toward the target therefore crawls and, worse, stalls when the
- * straight-line cell is blocked by another unit. BFS solves both problems: it finds
- * the shortest route around occupied cells, and because moves are unbounded we jump
- * to the farthest cell along that route in a single turn.
+ * DSA components:
+ *   Phase 1 – Greedy draft:    O(n log n) sort + O(n·k) fill + O(n) role-constraint pass
+ *   Phase 2 – Placement:       O(n log n) sort by role-tier, O(n) cell assignment
+ *   Phase 3 – Battle:          BFS O(V+E)=O(64) per move decision; O(n) focus/target scans
+ *   Occupied set:              HashSet → O(1) membership tests throughout
  */
 public class StudentBotV2 implements IBotAI {
 
@@ -37,20 +27,23 @@ public class StudentBotV2 implements IBotAI {
 
     private static final Set<String> RANGED = new HashSet<>();
     private static final Set<String> HEALER = new HashSet<>();
+    private static final Set<String> TANK   = new HashSet<>();   // high-def melee → centre
+    private static final Set<String> STRIKER = new HashSet<>();  // high-spd melee → flanks
     static {
-        RANGED.add("ARCHER");
-        RANGED.add("MAGE");
-        RANGED.add("WARLOCK");
-        RANGED.add("FROST_WITCH");
-        HEALER.add("CLERIC");
-        HEALER.add("DRUID");
+        RANGED .add("ARCHER");  RANGED .add("MAGE");
+        RANGED .add("WARLOCK"); RANGED .add("FROST_WITCH");
+        HEALER .add("CLERIC");  HEALER .add("DRUID");
+        TANK   .add("GUARDIAN"); TANK  .add("PALADIN"); TANK.add("KNIGHT");
+        STRIKER.add("ASSASSIN"); STRIKER.add("LANCER"); STRIKER.add("BERSERKER");
     }
 
-    // ============================================================
-    // PHASE 1: DRAFT - greedy by value-per-gold, O(n log n)
-    // ============================================================
+    // ================================================================
+    // PHASE 1: DRAFT — greedy by value-per-gold + role constraints
+    // ================================================================
     @Override
     public List<String> draftTeam(int budget, List<String> availableIds) {
+
+        // Sort descending by value-per-gold (includes skill-efficiency bonus).
         List<String> sorted = new ArrayList<>(availableIds);
         sorted.sort((a, b) -> Double.compare(
                 valuePerGold(ChampionFactory.create(b, "BLUE")),
@@ -58,7 +51,8 @@ public class StudentBotV2 implements IBotAI {
 
         List<String> picks = new ArrayList<>();
         int spent = 0;
-        // Greedy fill: best value-per-gold first, duplicates allowed, respect budget + cap.
+
+        // ── Greedy fill ────────────────────────────────────────────
         boolean progress = true;
         while (picks.size() < MAX_TEAM && progress) {
             progress = false;
@@ -72,199 +66,346 @@ public class StudentBotV2 implements IBotAI {
                 }
             }
         }
-        if (picks.isEmpty() && !sorted.isEmpty()) {
-            String cheapest = sorted.get(0);
-            for (String id : sorted) {
-                if (ChampionFactory.getCost(id) < ChampionFactory.getCost(cheapest)) cheapest = id;
+
+        // ── Upgrade pass ───────────────────────────────────────────
+        // Team is full; repeatedly swap the cheapest unit for the best
+        // (value/gold) unit that costs more, while leftover budget allows.
+        boolean upgraded = true;
+        while (upgraded && !picks.isEmpty()) {
+            upgraded = false;
+            int minCost = Integer.MAX_VALUE, minIdx = -1;
+            for (int i = 0; i < picks.size(); i++) {
+                int c = ChampionFactory.getCost(picks.get(i));
+                if (c < minCost) { minCost = c; minIdx = i; }
             }
+            int canSpend = (budget - spent) + minCost;
+            String best = null; double bestVal = -1;
+            for (String id : sorted) {
+                int c = ChampionFactory.getCost(id);
+                if (c > minCost && c <= canSpend) {
+                    double v = valuePerGold(ChampionFactory.create(id, "BLUE"));
+                    if (best == null || v > bestVal) { best = id; bestVal = v; }
+                }
+            }
+            if (best != null) {
+                spent = spent - minCost + ChampionFactory.getCost(best);
+                picks.set(minIdx, best);
+                upgraded = true;
+            }
+        }
+
+        // ── Role-constraint pass ───────────────────────────────────
+        // Guarantee ≥1 healer and ≥1 ranged unit if budget allows a swap.
+        picks = enforceRoleConstraint(picks, sorted, budget, spent, HEALER);
+        picks = enforceRoleConstraint(picks, sorted, budget, spent, RANGED);
+
+        // ── Fallback ───────────────────────────────────────────────
+        if (picks.isEmpty() && !sorted.isEmpty()) {
+            String cheapest = sorted.stream()
+                .min(Comparator.comparingInt(ChampionFactory::getCost))
+                .orElse(sorted.get(0));
             if (ChampionFactory.getCost(cheapest) <= budget) picks.add(cheapest);
         }
         return picks;
     }
 
-    // Value-per-gold: reward durability (survives the damage floor) and damage output,
-    // with a small bonus for range and speed. Defense is weighted because damage is
-    // reduced by defense (min 1), so each point of defense saves damage every hit.
-    private double valuePerGold(Champion c) {
-        double durability = c.getMaxHp() * (1.0 + c.getDefense() * 0.25);
-        double offense = c.getAttack() * (1.0 + c.getRange() * 0.3);
-        double tempo = c.getSpeed() * 1.5 + c.getMoveRange() * 0.5;
-        return (durability * 1.0 + offense * 1.6 + tempo) / c.getCost();
+    /**
+     * If the current picks contain no champion from 'requiredRole', replace the
+     * lowest-value non-role unit with the best available role unit that fits the
+     * freed-up budget.  Returns picks unchanged if the constraint is already met
+     * or no affordable swap exists.
+     */
+    private List<String> enforceRoleConstraint(List<String> picks, List<String> sorted,
+                                                int budget, int spent,
+                                                Set<String> requiredRole) {
+        boolean alreadyHas = picks.stream().anyMatch(id -> requiredRole.contains(id));
+        if (alreadyHas) return picks;
+
+        // Best available champion of the required role
+        String roleChamp = null; double roleVal = -1;
+        for (String id : sorted) {
+            if (!requiredRole.contains(id)) continue;
+            double v = valuePerGold(ChampionFactory.create(id, "BLUE"));
+            if (roleChamp == null || v > roleVal) { roleChamp = id; roleVal = v; }
+        }
+        if (roleChamp == null) return picks;
+
+        int roleCost = ChampionFactory.getCost(roleChamp);
+        // Find the lowest-value non-role unit we can afford to replace
+        int  replIdx = -1; double replVal = Double.MAX_VALUE;
+        for (int i = 0; i < picks.size(); i++) {
+            String id = picks.get(i);
+            if (requiredRole.contains(id)) continue;
+            int costDiff = roleCost - ChampionFactory.getCost(id);
+            if (budget - spent >= costDiff) {
+                double v = valuePerGold(ChampionFactory.create(id, "BLUE"));
+                if (v < replVal) { replVal = v; replIdx = i; }
+            }
+        }
+        if (replIdx >= 0) picks.set(replIdx, roleChamp);
+        return picks;
     }
 
-    // ============================================================
-    // PHASE 2: PLACEMENT - melee front, ranged/healers back
-    // ============================================================
+    /**
+     * Value-per-gold formula (higher = better value per gold spent).
+     *
+     *   durability  = effective HP after defence mitigation
+     *   offense     = raw damage weighted by range (ranged fires without closing)
+     *   tempo       = speed + mobility (acts early, reaches enemies fast)
+     *   skillBonus  = estimated extra value from skill casts over a full match
+     *                 Healers get a 1.5× multiplier — restoring HP has outsized value.
+     */
+    private double valuePerGold(Champion c) {
+        double durability  = c.getMaxHp() * (1.0 + c.getDefense() * 0.25);
+        double offense     = c.getAttack() * (1.0 + c.getRange() * 0.3);
+        double tempo       = c.getSpeed() * 1.5 + c.getMoveRange() * 0.5;
+
+        // Skill bonus: casts per 40-round match, each cast does (atk+2) effective damage/heal.
+        double castsPerMatch = 40.0 / (c.getSkillCooldown() + c.getSkillManaCost() / 2.0);
+        boolean isHealer     = HEALER.contains(c.getId());
+        double skillMult     = isHealer ? 1.5 : 0.8;  // healing > offensive burst
+        double skillBonus    = (c.getAttack() + 2) * castsPerMatch * skillMult;
+
+        return (durability + offense * 1.6 + tempo + skillBonus) / c.getCost();
+    }
+
+    // ================================================================
+    // PHASE 2: PLACEMENT — 3-tier: striker flanks, tank centre, rear back
+    // ================================================================
     @Override
     public List<Position> placeTeam(List<Champion> team,
-                                    List<Position> allowedCells,
-                                    boolean isBlue) {
-        // Front row = the one closest to the enemy. BLUE owns rows 0-2 (front = highest row),
-        // RED owns rows 5-7 (front = lowest row).
-        int frontRow = isBlue ? maxRow(allowedCells) : minRow(allowedCells);
+                                     List<Position> allowedCells,
+                                     boolean isBlue) {
+        int frontRow = maxRow(allowedCells); // BLUE row2 / RED row7 (visual home row)
 
-        List<Position> front = new ArrayList<>();
-        List<Position> back = new ArrayList<>();
+        // Partition cells
+        List<Position> frontAll  = new ArrayList<>();
+        List<Position> backAll   = new ArrayList<>();
         for (Position p : allowedCells) {
-            if (p.row() == frontRow) front.add(p);
-            else back.add(p);
+            if (p.row() == frontRow) frontAll.add(p);
+            else backAll.add(p);
         }
-        front.sort(Comparator.comparingInt(Position::col));
-        back.sort(Comparator.comparingInt(Position::col));
+        frontAll.sort(Comparator.comparingInt(Position::col));
+        backAll .sort(Comparator.comparingInt(Position::col));
 
-        // Melee take front cells, ranged/healers take back cells.
-        List<Champion> ordered = new ArrayList<>(team);
-        ordered.sort(Comparator.comparingInt(c -> rear(c.getId()) ? 1 : 0));
-
-        List<Position> result = new ArrayList<>();
-        int fi = 0, bi = 0;
-        for (Champion c : ordered) {
-            Position p;
-            if (rear(c.getId())) {
-                p = bi < back.size() ? back.get(bi++) : (fi < front.size() ? front.get(fi++) : null);
-            } else {
-                p = fi < front.size() ? front.get(fi++) : (bi < back.size() ? back.get(bi++) : null);
-            }
-            if (p != null) result.add(p);
+        // Sub-divide front: centre cols for tanks, edge cols for strikers
+        int mid = Grid.COLS / 2;
+        List<Position> centreFront = new ArrayList<>();
+        List<Position> edgeFront   = new ArrayList<>();
+        for (Position p : frontAll) {
+            if (p.col() >= mid - 2 && p.col() < mid + 2) centreFront.add(p);
+            else                                           edgeFront  .add(p);
         }
-        // Safety: if anything is unassigned, fill from remaining allowed cells in order.
-        if (result.size() < team.size()) {
-            for (Position p : allowedCells) {
-                if (result.size() >= team.size()) break;
-                if (!result.contains(p)) result.add(p);
-            }
-        }
-        // placeTeam must return one position per champion, in team order. Re-map:
-        return remapToTeamOrder(team, ordered, result);
-    }
 
-    // The engine assigns placement[i] to team[i], but we sorted into 'ordered'. Rebuild a
-    // team-indexed list so each champion gets the cell we chose for it.
-    private List<Position> remapToTeamOrder(List<Champion> team,
-                                            List<Champion> ordered,
-                                            List<Position> orderedPlaces) {
+        // Sub-divide back: centre for healers, rest for ranged
+        List<Position> centreBack = new ArrayList<>();
+        List<Position> edgeBack   = new ArrayList<>();
+        for (Position p : backAll) {
+            if (p.col() >= mid - 2 && p.col() < mid + 2) centreBack.add(p);
+            else                                           edgeBack  .add(p);
+        }
+
+        // Classify each champion into one of 4 tiers (priority order for assignment)
+        List<Champion> tanks    = new ArrayList<>();
+        List<Champion> strikers = new ArrayList<>();
+        List<Champion> ranged   = new ArrayList<>();
+        List<Champion> healers  = new ArrayList<>();
+
+        for (Champion c : team) {
+            String t = templateOf(c.getId());
+            if      (HEALER .contains(t)) healers .add(c);
+            else if (RANGED .contains(t)) ranged  .add(c);
+            else if (TANK   .contains(t)) tanks   .add(c);
+            else if (STRIKER.contains(t)) strikers.add(c);
+            else                          tanks   .add(c); // unknown melee → treat as tank
+        }
+
+        // Assign positions: tanks → centre front, strikers → edge front,
+        //                   healers → centre back,  ranged → edge back.
         Map<String, Position> byId = new HashMap<>();
-        for (int i = 0; i < ordered.size() && i < orderedPlaces.size(); i++) {
-            byId.put(ordered.get(i).getId(), orderedPlaces.get(i));
-        }
+        assign(tanks,    merge(centreFront, edgeFront, backAll),  byId);
+        assign(strikers, merge(edgeFront, centreFront, backAll),  byId);
+        assign(healers,  merge(centreBack, edgeBack,   frontAll), byId);
+        assign(ranged,   merge(edgeBack,   centreBack, frontAll), byId);
+
+        // Remap to engine-expected order (one position per team[i])
         List<Position> out = new ArrayList<>();
         for (Champion c : team) {
             Position p = byId.get(c.getId());
             if (p != null) out.add(p);
         }
+        // Safety fill for any unassigned champion
+        Set<Position> used = new HashSet<>(out);
+        for (Champion c : team) {
+            if (byId.containsKey(c.getId())) continue;
+            for (Position p : allowedCells) {
+                if (!used.contains(p)) { out.add(p); used.add(p); break; }
+            }
+        }
         return out;
     }
 
-    // ============================================================
-    // PHASE 3: BATTLE - BFS pathfinding + focus fire
-    // ============================================================
-    @Override
-    public List<BotAction> playTurn(List<Champion> allies,
-                                    List<Champion> enemies,
-                                    Grid grid, int round) {
-        List<BotAction> actions = new ArrayList<>();
+    /** Assign champions to the first available position from the priority list. */
+    private void assign(List<Champion> group, List<Position> priority,
+                        Map<String, Position> byId) {
+        Set<Position> taken = new HashSet<>(byId.values());
+        int pi = 0;
+        for (Champion c : group) {
+            if (byId.containsKey(c.getId())) continue;
+            while (pi < priority.size() && taken.contains(priority.get(pi))) pi++;
+            if (pi < priority.size()) {
+                byId.put(c.getId(), priority.get(pi));
+                taken.add(priority.get(pi));
+                pi++;
+            }
+        }
+    }
 
+    /** Concatenate lists without duplicates into a single priority list. */
+    @SafeVarargs
+    private final List<Position> merge(List<Position>... lists) {
+        List<Position> result = new ArrayList<>();
+        Set<Position>  seen   = new HashSet<>();
+        for (List<Position> list : lists)
+            for (Position p : list)
+                if (seen.add(p)) result.add(p);
+        return result;
+    }
+
+    // ================================================================
+    // PHASE 3: BATTLE — BFS + focus-fire + retreat + smart skill timing
+    // ================================================================
+    @Override
+    public List<BotAction> playTurn(List<Champion> allies, List<Champion> enemies,
+                                     Grid grid, int round) {
+        List<BotAction> actions = new ArrayList<>();
         List<Champion> aliveEnemies = aliveOnly(enemies);
-        List<Champion> aliveAllies = aliveOnly(allies);
+        List<Champion> aliveAllies  = aliveOnly(allies);
         if (aliveEnemies.isEmpty()) {
             for (Champion a : aliveAllies) actions.add(BotAction.wait(a.getId()));
             return actions;
         }
 
-        // occupied set for pathfinding: O(n) build, O(1) per lookup during BFS.
+        // Build occupied set: O(n) build, O(1) per BFS lookup.
         Set<Position> occupied = new HashSet<>();
-        for (Champion c : aliveAllies) occupied.add(c.getPosition());
+        for (Champion c : aliveAllies)  occupied.add(c.getPosition());
         for (Champion c : aliveEnemies) occupied.add(c.getPosition());
 
-        // Shared focus target: the enemy that takes the fewest hits to kill (lowest hp/dmg).
+        // Shared focus: enemy that takes fewest hits accounting for their defence.
         Champion focus = focusTarget(aliveAllies, aliveEnemies);
 
         for (Champion ally : aliveAllies) {
-            // The ally vacates its own cell while it decides (it can move out of it).
             occupied.remove(ally.getPosition());
             BotAction act = decide(ally, focus, aliveAllies, aliveEnemies, grid, occupied);
-            // Reserve the resulting cell so later-acting allies do not path into it.
-            if (act.type == BotAction.Type.MOVE && act.targetPosition != null) {
-                occupied.add(act.targetPosition);
-            } else {
-                occupied.add(ally.getPosition());
-            }
+            occupied.add(act.type == BotAction.Type.MOVE && act.targetPosition != null
+                    ? act.targetPosition : ally.getPosition());
             actions.add(act);
         }
         return actions;
     }
 
     private BotAction decide(Champion ally, Champion focus,
-                             List<Champion> allies, List<Champion> enemies,
-                             Grid grid, Set<Position> occupied) {
-        String id = ally.getId();
-        String role = templateOf(id); // unique id is "SIDE_TEMPLATE_index"; role checks use the template
+                              List<Champion> allies, List<Champion> enemies,
+                              Grid grid, Set<Position> occupied) {
+        String id   = ally.getId();
+        String role = templateOf(id);
 
-        // Healer: heal the most-hurt ally in range; do NOT wander off when nobody needs healing.
-        if (HEALER.contains(role) && skillReady(ally)) {
-            Champion hurt = mostHurtAlly(allies);
-            if (hurt != null
-                    && ally.getPosition().manhattanDistance(hurt.getPosition()) <= ally.getRange() + 1) {
-                return new BotAction(id, BotAction.Type.CAST_SKILL, null, hurt.getId());
-            }
-        }
-
-        // Attack the best target already in range (prefer one we can kill this turn).
-        Champion inRange = bestInRange(ally, enemies);
-        if (inRange != null) {
-            if (skillReady(ally) && !HEALER.contains(role)) {
-                return new BotAction(id, BotAction.Type.CAST_SKILL, null, inRange.getId());
-            }
-            return BotAction.attack(id, inRange.getId());
-        }
-
-        // Choose who to approach: the shared focus, unless a different enemy is much closer.
-        Champion goalEnemy = approachTarget(ally, focus, enemies);
-
-        // BFS to the best open cell adjacent to the target, then (because this engine allows
-        // unbounded moves) jump to the FARTHEST cell along that shortest path. If a healer has
-        // nothing to do and no enemy is close, it holds near the team instead of running in.
+        // ── 1. Healer logic ────────────────────────────────────────
         if (HEALER.contains(role)) {
-            int d = ally.getPosition().manhattanDistance(goalEnemy.getPosition());
-            if (d > ally.getRange() + 2) {
-                Position step = BFSPathfinder.advanceToward(ally.getPosition(), goalEnemy.getPosition(), grid, occupied);
-                if (step != null && !step.equals(ally.getPosition())) {
-                    return BotAction.move(id, step);
+            Champion hurt = mostHurtAlly(allies);
+            if (hurt != null) {
+                int d = ally.getPosition().manhattanDistance(hurt.getPosition());
+                if (d <= ally.getRange() + 1 && skillReady(ally)) {
+                    // In range and skill ready → heal
+                    return new BotAction(id, BotAction.Type.CAST_SKILL, null, hurt.getId());
+                } else if (d > ally.getRange() + 1) {
+                    // Out of range → chase the hurt ally
+                    Position step = BFSPathfinder.advanceToward(
+                            ally.getPosition(), hurt.getPosition(), grid, occupied);
+                    if (step != null && !step.equals(ally.getPosition()))
+                        return BotAction.move(id, step);
                 }
+            }
+            // No one needs healing → hold position or advance cautiously
+            Champion goal = approachTarget(ally, focus, enemies);
+            int dist = ally.getPosition().manhattanDistance(goal.getPosition());
+            if (dist > ally.getRange() + 2) {
+                Position step = BFSPathfinder.advanceToward(
+                        ally.getPosition(), goal.getPosition(), grid, occupied);
+                if (step != null && !step.equals(ally.getPosition()))
+                    return BotAction.move(id, step);
             }
             return BotAction.wait(id);
         }
 
-        Position dest = BFSPathfinder.advanceToward(ally.getPosition(), goalEnemy.getPosition(), grid, occupied);
-        if (dest != null && !dest.equals(ally.getPosition())) {
-            return BotAction.move(id, dest);
+        // ── 2. Retreat logic ──────────────────────────────────────
+        // Critically wounded non-healer → run to nearest healer if out of their range.
+        double hpFrac = (double) ally.getHp() / ally.getMaxHp();
+        if (hpFrac < 0.25) {
+            Champion nearHealer = closestAllyByRole(ally, allies, HEALER);
+            if (nearHealer != null) {
+                int d = ally.getPosition().manhattanDistance(nearHealer.getPosition());
+                if (d > nearHealer.getRange() + 1) {
+                    Position step = BFSPathfinder.advanceToward(
+                            ally.getPosition(), nearHealer.getPosition(), grid, occupied);
+                    if (step != null && !step.equals(ally.getPosition()))
+                        return BotAction.move(id, step);
+                }
+            }
         }
+
+        // ── 3. Attack / skill in range ────────────────────────────
+        Champion inRange = bestInRange(ally, enemies);
+        if (inRange != null) {
+            if (skillReady(ally)) {
+                int normalDmg = Math.max(1, ally.getAttack() - inRange.getDefense());
+                int skillDmg  = Math.max(1, ally.getAttack() + 2 - inRange.getDefense());
+                // Use skill if: it secures the kill, or target survives 3+ normal hits
+                boolean skillFinishes = skillDmg >= inRange.getHp() && normalDmg < inRange.getHp();
+                boolean skillWorthIt  = inRange.getHp() >= normalDmg * 3;
+                if (skillFinishes || skillWorthIt)
+                    return new BotAction(id, BotAction.Type.CAST_SKILL, null, inRange.getId());
+            }
+            return BotAction.attack(id, inRange.getId());
+        }
+
+        // ── 4. Move toward best target ───────────────────────────
+        Champion goal = approachTarget(ally, focus, enemies);
+        Position dest = BFSPathfinder.advanceToward(
+                ally.getPosition(), goal.getPosition(), grid, occupied);
+        if (dest != null && !dest.equals(ally.getPosition()))
+            return BotAction.move(id, dest);
+
         return BotAction.wait(id);
     }
 
-    // ============================================================
+    // ================================================================
     // HELPERS
-    // ============================================================
+    // ================================================================
 
+    /**
+     * Focus target: enemy that takes the fewest hits to kill.
+     * Uses effective damage = max(1, attacker.atk - target.def) to account for armour.
+     * FIX: old version used raw attack ignoring defence, causing tanks to be incorrectly
+     * prioritised when they actually take much less damage per hit.
+     */
     private Champion focusTarget(List<Champion> allies, List<Champion> enemies) {
         Champion best = null;
         double bestRounds = Double.MAX_VALUE;
         for (Champion e : enemies) {
-            // estimate rounds to kill using our strongest attacker's damage
-            int bestDmg = 1;
+            int bestEffDmg = 1;
             for (Champion a : allies) {
-                bestDmg = Math.max(bestDmg, Math.max(1, a.getAttack() - e.getDefense()));
+                int eff = Math.max(1, a.getAttack() - e.getDefense()); // FIX: account for def
+                bestEffDmg = Math.max(bestEffDmg, eff);
             }
-            double rounds = (double) e.getHp() / bestDmg;
+            double rounds = (double) e.getHp() / bestEffDmg;
             if (rounds < bestRounds) { bestRounds = rounds; best = e; }
         }
         return best;
     }
 
     private Champion approachTarget(Champion ally, Champion focus, List<Champion> enemies) {
-        // Follow the team focus unless a different enemy is meaningfully closer to this unit.
-        Champion nearest = null;
-        int nd = Integer.MAX_VALUE;
+        Champion nearest = null; int nd = Integer.MAX_VALUE;
         for (Champion e : enemies) {
             int d = ally.getPosition().manhattanDistance(e.getPosition());
             if (d < nd) { nd = d; nearest = e; }
@@ -275,25 +416,38 @@ public class StudentBotV2 implements IBotAI {
     }
 
     private Champion bestInRange(Champion attacker, List<Champion> enemies) {
-        Champion best = null;
-        double bestScore = Double.MAX_VALUE;
+        Champion best = null; double bestScore = Double.MAX_VALUE;
         for (Champion e : enemies) {
             int dist = attacker.getPosition().manhattanDistance(e.getPosition());
             if (dist > attacker.getRange()) continue;
-            int dmg = Math.max(1, attacker.getAttack() - e.getDefense());
+            int dmg  = Math.max(1, attacker.getAttack() - e.getDefense());
             boolean kill = dmg >= e.getHp();
-            double score = kill ? -1 : (double) e.getHp() / dmg; // prefer a kill, else fastest kill
+            double score = kill ? -1 : (double) e.getHp() / dmg;
             if (score < bestScore) { bestScore = score; best = e; }
         }
         return best;
     }
 
     private Champion mostHurtAlly(List<Champion> allies) {
-        Champion best = null;
-        double worst = 0.65; // only heal allies below 65% hp
+        Champion best = null; double worst = 0.80; // heal anyone below 80% HP
         for (Champion c : allies) {
+            if (!c.isAlive()) continue;
             double frac = (double) c.getHp() / c.getMaxHp();
             if (frac < worst) { worst = frac; best = c; }
+        }
+        return best;
+    }
+
+    /** Nearest alive ally whose template is in the given role set. */
+    private Champion closestAllyByRole(Champion self, List<Champion> allies,
+                                        Set<String> roleSet) {
+        Champion best = null; int bd = Integer.MAX_VALUE;
+        for (Champion c : allies) {
+            if (!c.isAlive()) continue;
+            if (c.getId().equals(self.getId())) continue;
+            if (!roleSet.contains(templateOf(c.getId()))) continue;
+            int d = self.getPosition().manhattanDistance(c.getPosition());
+            if (d < bd) { bd = d; best = c; }
         }
         return best;
     }
@@ -302,14 +456,6 @@ public class StudentBotV2 implements IBotAI {
         return c.getMana() >= c.getSkillManaCost() && c.getRemainingCooldown() == 0;
     }
 
-    private boolean rear(String id) {
-        String t = templateOf(id);
-        return RANGED.contains(t) || HEALER.contains(t);
-    }
-
-    // Champions carry a unique id of the form "SIDE_TEMPLATE_index" (e.g. "BLUE_CLERIC_0").
-    // Role lookups use the TEMPLATE portion, so extract it. Falls back to the raw id if the
-    // format is unexpected, so a plain "CLERIC" id still works.
     private String templateOf(String id) {
         if (id == null) return "";
         String[] parts = id.split("_");
@@ -325,12 +471,6 @@ public class StudentBotV2 implements IBotAI {
     private int maxRow(List<Position> cells) {
         int m = 0;
         for (Position p : cells) m = Math.max(m, p.row());
-        return m;
-    }
-
-    private int minRow(List<Position> cells) {
-        int m = Integer.MAX_VALUE;
-        for (Position p : cells) m = Math.min(m, p.row());
         return m;
     }
 }

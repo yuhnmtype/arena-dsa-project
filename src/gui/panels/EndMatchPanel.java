@@ -60,8 +60,8 @@ public class EndMatchPanel extends JDialog {
         costSection.setMaximumSize(new Dimension(Integer.MAX_VALUE, 180));
 
         // ── Buttons ───────────────────────────────────────────
-        JButton btnAgain  = makeButton("▶ New Match",  new Color(40, 140, 80));
-        JButton btnClose  = makeButton("✕ Close",      new Color(140, 40, 40));
+        JButton btnAgain  = makeButton("New Match",  new Color(40, 140, 80));
+        JButton btnClose  = makeButton("Close",      new Color(140, 40, 40));
 
         btnAgain.addActionListener(e -> {
             dispose();

@@ -1,13 +1,12 @@
 package gui.core;
 
+import bot.BotAction;
 import engine.BattleLog;
 import engine.BattleLogEntry;
 import engine.Champion;
 import engine.Position;
 import gui.render.BFSVisualizer;
 import gui.render.CellRenderer;
-import bot.BotAction;
-import javax.swing.JPanel;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics;
@@ -15,6 +14,7 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.util.HashMap;
 import java.util.Map;
+import javax.swing.JPanel;
 
 /**
  * The 8x8 board. Listens to the ReplayController; on each step it reconstructs the board
@@ -58,10 +58,7 @@ public class GamePanel extends JPanel implements ReplayController.StepListener {
 
     public GamePanel(ReplayController controller) {
         this.log = controller.getLog();
-        Dimension boardSize = new Dimension(GRID * CELL, GRID * CELL);
-        setPreferredSize(boardSize);
-        setMinimumSize(boardSize);
-        setMaximumSize(boardSize);
+        setPreferredSize(new Dimension(GRID * CELL, GRID * CELL));
         setBackground(new Color(28, 30, 40));
         controller.addListener(this);
         rebuildState(0);
@@ -81,7 +78,9 @@ public class GamePanel extends JPanel implements ReplayController.StepListener {
         for (Champion c : log.initialBlueTeam) state.put(c.getId(), new RenderUnit(c));
         for (Champion c : log.initialRedTeam)  state.put(c.getId(), new RenderUnit(c));
 
-        for (int i = 0; i <= step && i < log.totalSteps(); i++) {
+        // step 0 = "Reset" view: show the pristine starting board before any action.
+        // Only apply log entries for steps > 0, starting from entry index 0.
+        for (int i = 0; i < step && i < log.totalSteps(); i++) {
             BattleLogEntry e = log.getEntry(i);
             if (e == null) continue;
             RenderUnit actor = state.get(e.championId);

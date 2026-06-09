@@ -37,11 +37,11 @@ public class ControlPanel extends JPanel {
         labelAction = makeLabel("Action: —",           new Color(200, 200, 200), 12);
 
         // ── Playback buttons ─────────────────────────────────
-        btnReset   = makeButton("◀◀ Reset",   new Color(80,  80,  100));
-        btnPrev    = makeButton("◀ Prev",     new Color(60,  100, 140));
-        btnNext    = makeButton("Next ▶",     new Color(60,  140, 100));
-        btnAuto    = makeButton("Auto ▶▶",    new Color(140, 100, 60));
-        btnPause   = makeButton("⏸ Pause",    new Color(140, 60,  60));
+        btnReset   = makeButton("<< Reset",   new Color(80,  80,  100));
+        btnPrev    = makeButton("< Prev",     new Color(60,  100, 140));
+        btnNext    = makeButton("Next >",     new Color(60,  140, 100));
+        btnAuto    = makeButton("Auto >>",    new Color(140, 100, 60));
+        btnPause   = makeButton("|| Pause",   new Color(140, 60,  60));
 
         btnReset.addActionListener(e -> controller.reset());
         btnPrev .addActionListener(e -> controller.prev());
@@ -50,8 +50,8 @@ public class ControlPanel extends JPanel {
         btnPause.addActionListener(e -> controller.pause());
 
         // ── Utility buttons ──────────────────────────────────
-        btnResults  = makeButton("📊 Results",  new Color(80,  60,  140));
-        btnNewMatch = makeButton("🔄 New Match", new Color(30,  100, 130));
+        btnResults  = makeButton("Results",    new Color(80,  60,  140));
+        btnNewMatch = makeButton("New Match",  new Color(30,  100, 130));
 
         // Show EndMatchPanel with cost breakdown
         btnResults.addActionListener(e -> {
