@@ -36,10 +36,12 @@ public class GameWindow extends JFrame {
 
         // ── LEFT: the board ───────────────────────────────
         GamePanel board = new GamePanel(controller);
-        JPanel boardWrap = new JPanel(new java.awt.GridBagLayout());
+        JPanel boardWrap = new JPanel(new java.awt.BorderLayout());
         boardWrap.setBackground(BG);
         boardWrap.setPreferredSize(new Dimension(660, 800));
-        boardWrap.add(board);
+        // padding around the board so it sits nicely; board keeps its 640x640 preferred size
+        boardWrap.setBorder(new javax.swing.border.EmptyBorder(10, 10, 10, 10));
+        boardWrap.add(board, java.awt.BorderLayout.NORTH);
         add(boardWrap, BorderLayout.WEST);
 
         // ── RIGHT: info + turn order + stats stacked ──────
