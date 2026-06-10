@@ -109,7 +109,7 @@ public class GUIRunner {
         budgetCtrlRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
 
         // ── Run button ────────────────────────────────────────
-        JButton btnRun = new JButton("▶  Run Match");
+        JButton btnRun = new JButton("Run Match");
         btnRun.setBackground(new Color(40, 140, 80));
         btnRun.setForeground(Color.WHITE);
         btnRun.setFont(new Font("Arial", Font.BOLD, 14));
@@ -147,7 +147,7 @@ public class GUIRunner {
                             "Error: " + ex.getMessage(),
                             "Error", JOptionPane.ERROR_MESSAGE);
                         btnRun.setEnabled(true);
-                        btnRun.setText("▶  Run Match");
+                        btnRun.setText("Run Match");
                     }
                 }
             };

@@ -103,7 +103,7 @@ public class TurnOrderPanel extends JPanel {
         nameLabel.setFont(new Font("Arial",
             isActing ? Font.BOLD : Font.PLAIN, 12));
 
-        JLabel spdLabel = new JLabel("⚡" + spd);
+        JLabel spdLabel = new JLabel("SPD:" + spd);
         spdLabel.setForeground(new Color(255, 220, 80));
         spdLabel.setFont(new Font("Arial", Font.BOLD, 12));
 
