@@ -26,7 +26,7 @@ public class GameWindow extends JFrame {
     public GameWindow(BattleLog log) {
         super("Arena Bot - Battle Replay");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setSize(1200, 800);
+        setSize(1200, 900);
         setLocationRelativeTo(null);
         getContentPane().setBackground(BG);
         setLayout(new BorderLayout());
@@ -36,13 +36,14 @@ public class GameWindow extends JFrame {
 
         // ── LEFT: the board ───────────────────────────────
         GamePanel board = new GamePanel(controller);
-        JPanel boardWrap = new JPanel(new java.awt.BorderLayout());
-        boardWrap.setBackground(BG);
-        boardWrap.setPreferredSize(new Dimension(660, 800));
-        // padding around the board so it sits nicely; board keeps its 640x640 preferred size
-        boardWrap.setBorder(new javax.swing.border.EmptyBorder(10, 10, 10, 10));
-        boardWrap.add(board, java.awt.BorderLayout.NORTH);
-        add(boardWrap, BorderLayout.WEST);
+        JPanel boardCenter = new JPanel(new java.awt.GridBagLayout()); // centers the fixed-size board
+        boardCenter.setBackground(BG);
+        boardCenter.add(board);
+        JScrollPane boardScroll = new JScrollPane(boardCenter);
+        boardScroll.setBorder(null);
+        boardScroll.setPreferredSize(new Dimension(660, 800));
+        boardScroll.getVerticalScrollBar().setUnitIncrement(16);
+        add(boardScroll, BorderLayout.WEST);
 
         // ── RIGHT: info + turn order + stats stacked ──────
         JPanel right = new JPanel();
