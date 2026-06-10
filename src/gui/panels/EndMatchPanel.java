@@ -20,16 +20,21 @@ public class EndMatchPanel extends JDialog {
     }
 
     private void buildUI(BattleLog log) {
-        // ── Winner banner ──────────────────────────────────────
-        boolean blueWin = "BLUE".equals(log.winner);
-        Color winColor  = blueWin
-            ? new Color(60, 120, 255)
-            : new Color(255, 60, 60);
-        String winText  = blueWin ? "BLUE WINS!" : "RED WINS!";
+        // Parse bot names from matchType e.g. "V2_vs_Simple" → BLUE=StudentBotV2, RED=SimpleBot
+        String[] botNames = parseBotNames(log.matchType);
+        String blueBot = botNames[0];
+        String redBot  = botNames[1];
 
-        JLabel lblWinner = makeLabel(winText, winColor, 26, true);
-        JLabel lblType   = makeLabel(log.matchType + "  |  Budget: " + log.budget + "g",
-                                     new Color(180, 180, 180), 12, false);
+        // ── Winner banner ──────────────────────────────────────
+        boolean blueWin  = "BLUE".equals(log.winner);
+        Color   winColor = blueWin ? new Color(60, 120, 255) : new Color(255, 60, 60);
+        String  winBot   = blueWin ? blueBot : redBot;
+        String  winTeam  = blueWin ? "BLUE" : "RED";
+
+        JLabel lblWinner  = makeLabel(winTeam + " WINS!", winColor, 26, true);
+        JLabel lblWinBot  = makeLabel("(" + winBot + ")", winColor.brighter(), 13, true);
+        JLabel lblBudget  = makeLabel("Budget: " + log.budget + "g  |  " + log.matchType,
+                                      new Color(150, 150, 160), 11, false);
 
         // ── Match stats ───────────────────────────────────────
         JPanel statsPanel = new JPanel(new GridLayout(4, 2, 10, 6));
@@ -50,22 +55,25 @@ public class EndMatchPanel extends JDialog {
         costSection.setBackground(new Color(25, 25, 42));
         costSection.setBorder(new EmptyBorder(8, 12, 8, 12));
 
+        // Show "BLUE TEAM (StudentBotV2)" with winner crown
+        String blueLabel = "BLUE  " + blueBot + (blueWin ? "  [WIN]" : "");
+        String redLabel  = "RED   " + redBot  + (!blueWin ? "  [WIN]" : "");
+
         costSection.add(buildTeamCostPanel(
-            "BLUE TEAM", new Color(60, 120, 220),
+            blueLabel, new Color(60, 120, 220),
             log.initialBlueTeam, log.budget));
         costSection.add(buildTeamCostPanel(
-            "RED TEAM", new Color(220, 60, 60),
+            redLabel, new Color(220, 60, 60),
             log.initialRedTeam, log.budget));
 
-        costSection.setMaximumSize(new Dimension(Integer.MAX_VALUE, 180));
+        costSection.setMaximumSize(new Dimension(Integer.MAX_VALUE, 190));
 
         // ── Buttons ───────────────────────────────────────────
-        JButton btnAgain  = makeButton("New Match",  new Color(40, 140, 80));
-        JButton btnClose  = makeButton("Close",      new Color(140, 40, 40));
+        JButton btnAgain = makeButton("New Match", new Color(40, 140, 80));
+        JButton btnClose = makeButton("Close",     new Color(140, 40, 40));
 
         btnAgain.addActionListener(e -> {
             dispose();
-            // Close GameWindow parent and reopen setup
             if (getOwner() != null) getOwner().dispose();
             runner.GUIRunner.showSetup();
         });
@@ -82,8 +90,10 @@ public class EndMatchPanel extends JDialog {
         // ── Assemble ──────────────────────────────────────────
         add(Box.createVerticalStrut(14));
         add(center(lblWinner));
+        add(Box.createVerticalStrut(2));
+        add(center(lblWinBot));
         add(Box.createVerticalStrut(4));
-        add(center(lblType));
+        add(center(lblBudget));
         add(Box.createVerticalStrut(10));
         add(statsPanel);
         add(Box.createVerticalStrut(10));
@@ -227,6 +237,20 @@ public class EndMatchPanel extends JDialog {
         if (u > 0 && t.substring(u + 1).matches("\\d+"))
             t = t.substring(0, u);
         return t.isEmpty() ? id : t;
+    }
+
+    /**
+     * Parses matchType string into [blueBotName, redBotName].
+     * e.g. "V2_vs_Simple"      → ["StudentBotV2", "SimpleBot"]
+     *      "Simple_vs_V2"      → ["SimpleBot",     "StudentBotV2"]
+     *      "V2_vs_V2"          → ["StudentBotV2",  "StudentBotV2"]
+     *      "Simple_vs_Simple"  → ["SimpleBot",     "SimpleBot"]
+     */
+    private static String[] parseBotNames(String matchType) {
+        if (matchType == null) return new String[]{"BLUE Bot", "RED Bot"};
+        String blue = matchType.startsWith("V2")     ? "StudentBotV2" : "SimpleBot";
+        String red  = matchType.endsWith("V2")       ? "StudentBotV2" : "SimpleBot";
+        return new String[]{blue, red};
     }
 
     // Static helper to open dialog
