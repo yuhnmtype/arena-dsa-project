@@ -128,11 +128,13 @@ public class ControlPanel extends JPanel {
 
     private void registerListener() {
         controller.addListener((entry, step, total) -> {
-            labelStep.setText("Step: " + (step + 1) + " / " + total);
+            int grp   = controller.getCurrentGroup() + 1; // 1-indexed display
+            int grpTot = controller.getTotalGroups();
+            labelStep.setText("Step: " + grp + " / " + grpTot);
             if (entry != null) {
                 labelRound.setText("Round: " + entry.round + " / 40");
                 labelAction.setText(entry.team + " " + entry.championName
-                    + " → " + entry.actionType);
+                    + " \u2192 " + entry.actionType);
             }
         });
     }
