@@ -20,12 +20,26 @@ public class CellRenderer {
     private static final Color DARK_A = new Color(40, 42, 54);
     private static final Color DARK_B = new Color(48, 50, 64);
     private static final Color GRID_LINE = new Color(70, 72, 90);
+    // faint, transparent territory tints (drawn over the checkerboard)
+    private static final Color BLUE_ZONE = new Color(60, 110, 200, 45);
+    private static final Color RED_ZONE  = new Color(200, 70, 70, 45);
 
     /** Checkerboard background for an empty cell. */
     public void drawBackground(Graphics2D g, int row, int col, int x, int y) {
         boolean even = (row + col) % 2 == 0;
         g.setColor(even ? DARK_A : DARK_B);
         g.fillRect(x, y, CELL, CELL);
+
+        // Territory tint: BLUE deploys in the top rows (0-2), RED in the bottom rows (5-7),
+        // rows 3-4 are neutral no-man's-land. A faint overlay makes each side's zone obvious.
+        if (row <= 2) {
+            g.setColor(BLUE_ZONE);
+            g.fillRect(x, y, CELL, CELL);
+        } else if (row >= 5) {
+            g.setColor(RED_ZONE);
+            g.fillRect(x, y, CELL, CELL);
+        }
+
         g.setColor(GRID_LINE);
         g.drawRect(x, y, CELL, CELL);
     }
@@ -38,21 +52,6 @@ public class CellRenderer {
             drawDead(g, c, x, y);
             return;
         }
-
-        // Team colour background — makes BLUE vs RED instantly readable
-        boolean isBlue = c.getId().startsWith("BLUE");
-        Color teamBg = isBlue
-                ? new Color(30, 60, 140, 90)   // blue tint, semi-transparent
-                : new Color(140, 30, 30, 90);   // red tint, semi-transparent
-        g.setColor(teamBg);
-        g.fillRect(x + 2, y + 2, CELL - 4, CELL - 4);
-
-        // Team colour border
-        Color teamBorder = isBlue
-                ? new Color(60, 120, 220, 180)
-                : new Color(220, 60, 60, 180);
-        g.setColor(teamBorder);
-        g.drawRect(x + 2, y + 2, CELL - 4, CELL - 4);
 
         ChampionSprite.draw(g, c, x, y);
         drawHpBar(g, c, x, y);
