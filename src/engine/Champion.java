@@ -47,6 +47,16 @@ public class Champion {
         if (this.hp == 0) this.alive = false;
     }
 
+    /**
+     * Apply pre-computed effective damage directly (no defence subtraction).
+     * Used by the simultaneous accumulated-damage model where defence is
+     * already applied per-hit before accumulation.
+     */
+    public void directDamage(int amount) {
+        this.hp = Math.max(0, this.hp - amount);
+        if (this.hp == 0) this.alive = false;
+    }
+
     public void gainMana(int amount) {
         this.mana = Math.min(maxMana, this.mana + amount);
     }

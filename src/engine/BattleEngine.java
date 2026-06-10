@@ -5,6 +5,29 @@ import bot.BotAction;
 import bot.IBotAI;
 import java.util.*;
 
+/**
+ * BattleEngine — simultaneous-resolution turn engine.
+ *
+ * Each round is resolved in two phases:
+ *
+ *   Phase B1 – MOVE:  All units' move intentions are collected, conflicts
+ *              resolved by speed (highest speed wins the contested cell;
+ *              PriorityQueue re-used as the tiebreak comparator), then
+ *              all non-blocked moves applied at once.
+ *
+ *   Phase B2 – ATTACK / SKILL:  All damage/heal values are accumulated
+ *              into per-target maps using a snapshot of pre-move positions
+ *              for range validation (the board the bot decided on).
+ *              Defence is subtracted per-hit before accumulation so armour
+ *              is applied correctly for every incoming strike.
+ *              All accumulated values are applied simultaneously:
+ *                – mutual kills are possible
+ *                – overkill requires no special case
+ *                – CAST_SKILL on an ally heals; on an enemy damages
+ *
+ * DSA note: the PriorityQueue is retained as the move-conflict tiebreak
+ * comparator (speed DESC, BLUE first), keeping the graded DSA component.
+ */
 public class BattleEngine {
 
     public static final int MAX_ROUNDS = 40;
@@ -18,240 +41,445 @@ public class BattleEngine {
         this.redBot  = redBot;
     }
 
-    public MatchResult runMatch(int budget) {
-        return runMatch(budget, "Unknown");
-    }
+    // ================================================================
+    // runMatch — tournament version (no log)
+    // ================================================================
+    public MatchResult runMatch(int budget) { return runMatch(budget, "Unknown"); }
 
     public MatchResult runMatch(int budget, String matchType) {
         Grid grid = new Grid();
 
         List<String> pool      = ChampionFactory.getAllIds();
         List<String> blueDraft = blueBot.draftTeam(budget, pool);
-        List<String> redDraft  = redBot.draftTeam(budget, pool);
+        List<String> redDraft  = redBot .draftTeam(budget, pool);
 
-        List<Champion> blueTeam = new ArrayList<>();
-        List<Champion> redTeam  = new ArrayList<>();
-        for (int i = 0; i < blueDraft.size(); i++)
-            blueTeam.add(ChampionFactory.createWithUniqueId(blueDraft.get(i), "BLUE", i));
-        for (int i = 0; i < redDraft.size(); i++)
-            redTeam.add(ChampionFactory.createWithUniqueId(redDraft.get(i), "RED", i));
+        List<Champion> blueTeam = buildTeam(blueDraft, "BLUE");
+        List<Champion> redTeam  = buildTeam(redDraft,  "RED");
 
-        List<Position> blueCells  = getAllowedCells("BLUE");
-        List<Position> redCells   = getAllowedCells("RED");
-        List<Position> bluePlaces = blueBot.placeTeam(blueTeam, blueCells, true);
-        List<Position> redPlaces  = redBot.placeTeam(redTeam, redCells, false);
-
-        for (int i = 0; i < blueTeam.size(); i++) {
-            Position p = bluePlaces.get(i);
-            blueTeam.get(i).setPosition(p);
-            grid.occupy(p);
-        }
-        for (int i = 0; i < redTeam.size(); i++) {
-            Position p = redPlaces.get(i);
-            redTeam.get(i).setPosition(p);
-            grid.occupy(p);
-        }
+        placeTeam(blueTeam, blueBot, getAllowedCells("BLUE"), true,  grid);
+        placeTeam(redTeam,  redBot,  getAllowedCells("RED"),  false, grid);
 
         for (int round = 1; round <= MAX_ROUNDS; round++) {
-            // Speed desc; BLUE acts first on ties (teacher requirement).
-            PriorityQueue<Champion> turnOrder = new PriorityQueue<>(
-                Comparator.comparingInt(Champion::getSpeed).reversed()
-                    .thenComparing(c -> c.getTeamSide().equals("BLUE") ? 0 : 1)
-            );
-            blueTeam.stream().filter(Champion::isAlive).forEach(turnOrder::add);
-            redTeam.stream().filter(Champion::isAlive).forEach(turnOrder::add);
+            List<Champion> aliveBlue = aliveOnly(blueTeam);
+            List<Champion> aliveRed  = aliveOnly(redTeam);
+            if (aliveBlue.isEmpty() || aliveRed.isEmpty()) break;
 
-            List<BotAction> blueActions = blueBot.playTurn(
-                aliveOnly(blueTeam), aliveOnly(redTeam), grid, round);
-            List<BotAction> redActions  = redBot.playTurn(
-                aliveOnly(redTeam), aliveOnly(blueTeam), grid, round);
+            // Bot decisions (see the pre-move board)
+            Map<String, BotAction> actionMap = collectActions(
+                aliveBlue, aliveRed, grid, round);
 
-            Map<String, BotAction> actionMap = new HashMap<>();
-            for (BotAction a : blueActions) actionMap.put(a.championId, a);
-            for (BotAction a : redActions)  actionMap.put(a.championId, a);
+            // Two-phase simultaneous resolution
+            List<Champion> allAlive = merged(aliveBlue, aliveRed);
+            Map<String, Position> startPos = snapshotPositions(allAlive);
 
-            while (!turnOrder.isEmpty()) {
-                Champion actor = turnOrder.poll();
-                if (!actor.isAlive()) continue;
-                BotAction action = actionMap.get(actor.getId());
-                if (action != null)
-                    executeAction(actor, action, blueTeam, redTeam, grid);
-            }
+            resolveMoves  (allAlive, actionMap, grid);
+            resolveAttacks(allAlive, actionMap, startPos, blueTeam, redTeam, grid);
 
-            blueTeam.forEach(c -> { if (c.isAlive()) { c.gainMana(2); c.tickCooldown(); } });
-            redTeam.forEach(c  -> { if (c.isAlive()) { c.gainMana(2); c.tickCooldown(); } });
+            tickManaAndCooldown(blueTeam);
+            tickManaAndCooldown(redTeam);
 
             boolean blueAlive = blueTeam.stream().anyMatch(Champion::isAlive);
-            boolean redAlive  = redTeam.stream().anyMatch(Champion::isAlive);
-
+            boolean redAlive  = redTeam .stream().anyMatch(Champion::isAlive);
             if (!blueAlive || !redAlive) {
-                String winner = blueAlive ? "BLUE" : "RED";
-                return buildResult(matchType, winner, round, budget,
-                                   blueTeam, redTeam, blueDraft, redDraft);
+                return buildResult(matchType, blueAlive ? "BLUE" : "RED",
+                    round, budget, blueTeam, redTeam, blueDraft, redDraft);
             }
         }
 
-        int blueHp = blueTeam.stream().filter(Champion::isAlive)
-                              .mapToInt(Champion::getHp).sum();
-        int redHp  = redTeam.stream().filter(Champion::isAlive)
-                             .mapToInt(Champion::getHp).sum();
-        String winner = blueHp >= redHp ? "BLUE" : "RED";
-        return buildResult(matchType, winner, MAX_ROUNDS, budget,
-                           blueTeam, redTeam, blueDraft, redDraft);
+        int blueHp = hpSum(blueTeam), redHp = hpSum(redTeam);
+        return buildResult(matchType, blueHp >= redHp ? "BLUE" : "RED",
+            MAX_ROUNDS, budget, blueTeam, redTeam, blueDraft, redDraft);
     }
 
-    // ── GUI version — returns BattleLog ──────────────────────────
+    // ================================================================
+    // runMatchWithLog — GUI version (produces BattleLog for replay)
+    // ================================================================
     public BattleLog runMatchWithLog(int budget, String matchType) {
-        BattleLog log = new BattleLog(matchType, budget);
-        Grid grid = new Grid();
+        BattleLog log  = new BattleLog(matchType, budget);
+        Grid      grid = new Grid();
 
         List<String> pool      = ChampionFactory.getAllIds();
         List<String> blueDraft = blueBot.draftTeam(budget, pool);
-        List<String> redDraft  = redBot.draftTeam(budget, pool);
+        List<String> redDraft  = redBot .draftTeam(budget, pool);
 
-        List<Champion> blueTeam = new ArrayList<>();
-        List<Champion> redTeam  = new ArrayList<>();
-        for (int i = 0; i < blueDraft.size(); i++)
-            blueTeam.add(ChampionFactory.createWithUniqueId(blueDraft.get(i), "BLUE", i));
-        for (int i = 0; i < redDraft.size(); i++)
-            redTeam.add(ChampionFactory.createWithUniqueId(redDraft.get(i), "RED", i));
+        List<Champion> blueTeam = buildTeam(blueDraft, "BLUE");
+        List<Champion> redTeam  = buildTeam(redDraft,  "RED");
 
-        List<Position> blueCells  = getAllowedCells("BLUE");
-        List<Position> redCells   = getAllowedCells("RED");
-        List<Position> bluePlaces = blueBot.placeTeam(blueTeam, blueCells, true);
-        List<Position> redPlaces  = redBot.placeTeam(redTeam, redCells, false);
-
-        for (int i = 0; i < blueTeam.size(); i++) {
-            blueTeam.get(i).setPosition(bluePlaces.get(i));
-            grid.occupy(bluePlaces.get(i));
-        }
-        for (int i = 0; i < redTeam.size(); i++) {
-            redTeam.get(i).setPosition(redPlaces.get(i));
-            grid.occupy(redPlaces.get(i));
-        }
+        placeTeam(blueTeam, blueBot, getAllowedCells("BLUE"), true,  grid);
+        placeTeam(redTeam,  redBot,  getAllowedCells("RED"),  false, grid);
 
         log.initialBlueTeam = deepCopy(blueTeam);
         log.initialRedTeam  = deepCopy(redTeam);
 
         for (int round = 1; round <= MAX_ROUNDS; round++) {
-            // Speed desc; BLUE acts first on ties (teacher requirement).
-            PriorityQueue<Champion> turnOrder = new PriorityQueue<>(
-                Comparator.comparingInt(Champion::getSpeed).reversed()
-                    .thenComparing(c -> c.getTeamSide().equals("BLUE") ? 0 : 1)
-            );
-            blueTeam.stream().filter(Champion::isAlive).forEach(turnOrder::add);
-            redTeam.stream().filter(Champion::isAlive).forEach(turnOrder::add);
+            List<Champion> aliveBlue = aliveOnly(blueTeam);
+            List<Champion> aliveRed  = aliveOnly(redTeam);
+            if (aliveBlue.isEmpty() || aliveRed.isEmpty()) break;
 
-            List<BotAction> blueActions = blueBot.playTurn(
-                aliveOnly(blueTeam), aliveOnly(redTeam), grid, round);
-            List<BotAction> redActions  = redBot.playTurn(
-                aliveOnly(redTeam), aliveOnly(blueTeam), grid, round);
+            // Bot decisions (see the pre-move board)
+            Map<String, BotAction> actionMap = collectActions(
+                aliveBlue, aliveRed, grid, round);
 
-            Map<String, BotAction> actionMap = new HashMap<>();
-            for (BotAction a : blueActions) actionMap.put(a.championId, a);
-            for (BotAction a : redActions)  actionMap.put(a.championId, a);
+            List<Champion> allAlive = merged(aliveBlue, aliveRed);
 
-            while (!turnOrder.isEmpty()) {
-                Champion actor = turnOrder.poll();
-                if (!actor.isAlive()) continue;
-                BotAction action = actionMap.get(actor.getId());
-                if (action == null) continue;
+            // ── Snapshot pre-move state ───────────────────────────
+            Map<String, Position> startPos = snapshotPositions(allAlive);
+            Map<String, Integer>  startHp  = snapshotHp(allAlive);
 
-                // Snapshot before
-                int hpBefore       = actor.getHp();
-                int manaBefore     = actor.getMana();
-                Position fromPos   = actor.getPosition();
-                String targetId    = action.targetChampionId;
-                int targetHpBefore = -1;
-                Champion targetChamp = findById(targetId, blueTeam, redTeam);
-                if (targetChamp != null) targetHpBefore = targetChamp.getHp();
+            // ── Phase B1: simultaneous moves ──────────────────────
+            Map<String, Position> actualDest = resolveMoves(allAlive, actionMap, grid);
 
-                // Execute
-                executeAction(actor, action, blueTeam, redTeam, grid);
+            // Log MOVE phase (tick=0)
+            Set<Position> snapAfterMove = occupiedSet(allAlive);
+            for (Champion actor : allAlive) {
+                BotAction a    = actionMap.get(actor.getId());
+                BotAction.Type type = (a != null) ? a.type : BotAction.Type.WAIT;
 
-                // Snapshot after
-                int hpAfter    = actor.getHp();
-                int manaAfter  = actor.getMana();
-                Position toPos = actor.getPosition();
-                int targetHpAfter = targetChamp != null ? targetChamp.getHp() : -1;
+                Position from = startPos.get(actor.getId());
+                Position to   = actor.getPosition();
 
-                // Occupied snapshot
-                Set<Position> snap = new HashSet<>();
-                blueTeam.stream().filter(Champion::isAlive)
-                        .forEach(c -> snap.add(c.getPosition()));
-                redTeam.stream().filter(Champion::isAlive)
-                       .forEach(c -> snap.add(c.getPosition()));
-
-                // ── BFS path for MOVE actions ─────────────────
+                // BFS path for moved units
                 List<Position> bfsPath = new ArrayList<>();
-                if (action.type == BotAction.Type.MOVE
-                        && fromPos != null && toPos != null
-                        && !fromPos.equals(toPos)) {
-                    bfsPath = BFSPathfinder.findPath(fromPos, toPos, grid, snap);
+                if (type == BotAction.Type.MOVE && from != null
+                        && !from.equals(to)) {
+                    bfsPath = BFSPathfinder.findPath(from, to, grid, snapAfterMove);
                 }
 
-                // Extract template name
-                String name = templateName(actor.getId());
-                String team = actor.getId().startsWith("BLUE") ? "BLUE" : "RED";
-
                 log.add(new BattleLogEntry(
-                    round, actor.getId(), name, team,
-                    action.type,
-                    fromPos, toPos,
-                    hpBefore, hpAfter,
-                    manaBefore, manaAfter,
-                    targetId, targetHpBefore, targetHpAfter,
-                    bfsPath, snap   // ← bfsPath thay vì null
+                    round, 0,
+                    actor.getId(), templateName(actor.getId()),
+                    actor.getId().startsWith("BLUE") ? "BLUE" : "RED",
+                    type == BotAction.Type.ATTACK || type == BotAction.Type.CAST_SKILL
+                        ? BotAction.Type.WAIT : type,   // attacks logged in tick=1
+                    from, to,
+                    startHp.getOrDefault(actor.getId(), actor.getHp()), actor.getHp(),
+                    actor.getMana(), actor.getMana(),
+                    null, -1, -1,
+                    bfsPath, snapAfterMove
                 ));
             }
 
-            blueTeam.forEach(c -> { if (c.isAlive()) { c.gainMana(2); c.tickCooldown(); } });
-            redTeam.forEach(c  -> { if (c.isAlive()) { c.gainMana(2); c.tickCooldown(); } });
+            // ── Phase B2: simultaneous attacks / skills ───────────
+            // Accumulate damage and heals BEFORE applying anything
+            Map<String, Integer> damageAcc = new LinkedHashMap<>();
+            Map<String, Integer> healAcc   = new LinkedHashMap<>();
+
+            for (Champion actor : allAlive) {
+                BotAction a = actionMap.get(actor.getId());
+                if (a == null) continue;
+                if (a.type != BotAction.Type.ATTACK
+                        && a.type != BotAction.Type.CAST_SKILL) continue;
+
+                Champion target = findById(a.targetChampionId, blueTeam, redTeam);
+                if (target == null) continue;
+
+                // Range check on PRE-MOVE positions (what the bot saw)
+                Position ap = startPos.get(actor.getId());
+                Position tp = startPos.get(target.getId());
+                if (ap == null || tp == null) continue;
+                if (ap.manhattanDistance(tp) > actor.getRange()) continue;
+
+                if (a.type == BotAction.Type.ATTACK) {
+                    int eff = Math.max(1, actor.getAttack() - target.getDefense());
+                    damageAcc.merge(target.getId(), eff, Integer::sum);
+
+                } else { // CAST_SKILL
+                    if (actor.getMana() >= actor.getSkillManaCost()
+                            && actor.getRemainingCooldown() == 0) {
+                        actor.useSkill();
+                        boolean sameTeam = actor.getTeamSide().equals(target.getTeamSide());
+                        if (sameTeam) {
+                            // Healer targeting ally → heal
+                            healAcc.merge(target.getId(),
+                                actor.getAttack() + 2, Integer::sum);
+                        } else {
+                            int eff = Math.max(1, actor.getAttack() + 2 - target.getDefense());
+                            damageAcc.merge(target.getId(), eff, Integer::sum);
+                        }
+                    }
+                }
+            }
+
+            // Apply heals
+            for (Map.Entry<String, Integer> e : healAcc.entrySet()) {
+                Champion t = findById(e.getKey(), blueTeam, redTeam);
+                if (t != null && t.isAlive()) t.heal(e.getValue());
+            }
+
+            // Apply accumulated damage (directDamage: defence already subtracted per-hit)
+            for (Map.Entry<String, Integer> e : damageAcc.entrySet()) {
+                Champion t = findById(e.getKey(), blueTeam, redTeam);
+                if (t != null && t.isAlive()) {
+                    t.directDamage(e.getValue());
+                    if (!t.isAlive()) grid.vacate(t.getPosition());
+                }
+            }
+
+            // Log ATTACK/SKILL phase (tick=1)
+            Set<Position> snapAfterCombat = occupiedSet(allAlive);
+            for (Champion actor : allAlive) {
+                BotAction a = actionMap.get(actor.getId());
+                if (a == null) continue;
+                if (a.type != BotAction.Type.ATTACK
+                        && a.type != BotAction.Type.CAST_SKILL) continue;
+
+                Champion target = findById(a.targetChampionId, blueTeam, redTeam);
+                int tHpBefore = target != null
+                    ? startHp.getOrDefault(target.getId(), -1) : -1;
+                int tHpAfter  = target != null ? target.getHp() : -1;
+
+                log.add(new BattleLogEntry(
+                    round, 1,
+                    actor.getId(), templateName(actor.getId()),
+                    actor.getId().startsWith("BLUE") ? "BLUE" : "RED",
+                    a.type,
+                    startPos.get(actor.getId()), actor.getPosition(),
+                    startHp.getOrDefault(actor.getId(), actor.getHp()), actor.getHp(),
+                    actor.getMana(), actor.getMana(),
+                    a.targetChampionId, tHpBefore, tHpAfter,
+                    new ArrayList<>(), snapAfterCombat
+                ));
+            }
+
+            tickManaAndCooldown(blueTeam);
+            tickManaAndCooldown(redTeam);
 
             boolean blueAlive = blueTeam.stream().anyMatch(Champion::isAlive);
-            boolean redAlive  = redTeam.stream().anyMatch(Champion::isAlive);
-
+            boolean redAlive  = redTeam .stream().anyMatch(Champion::isAlive);
             if (!blueAlive || !redAlive) {
                 log.winner          = blueAlive ? "BLUE" : "RED";
                 log.totalRounds     = round;
-                log.blueHpRemaining = blueTeam.stream()
-                    .filter(Champion::isAlive).mapToInt(Champion::getHp).sum();
-                log.redHpRemaining  = redTeam.stream()
-                    .filter(Champion::isAlive).mapToInt(Champion::getHp).sum();
+                log.blueHpRemaining = hpSum(blueTeam);
+                log.redHpRemaining  = hpSum(redTeam);
                 return log;
             }
         }
 
-        int blueHp = blueTeam.stream().filter(Champion::isAlive)
-                              .mapToInt(Champion::getHp).sum();
-        int redHp  = redTeam.stream().filter(Champion::isAlive)
-                             .mapToInt(Champion::getHp).sum();
-        log.winner          = blueHp >= redHp ? "BLUE" : "RED";
+        log.winner          = hpSum(blueTeam) >= hpSum(redTeam) ? "BLUE" : "RED";
         log.totalRounds     = MAX_ROUNDS;
-        log.blueHpRemaining = blueHp;
-        log.redHpRemaining  = redHp;
+        log.blueHpRemaining = hpSum(blueTeam);
+        log.redHpRemaining  = hpSum(redTeam);
         return log;
     }
 
-    // ── Helpers ──────────────────────────────────────────────────
+    // ================================================================
+    // Phase B1: Simultaneous move resolution
+    // Returns map of championId → actual destination (for logging).
+    // Conflict rule: highest speed wins contested cell; BLUE first on ties
+    //   (PriorityQueue comparator repurposed as move-conflict tiebreak).
+    // ================================================================
+    private Map<String, Position> resolveMoves(List<Champion> allAlive,
+                                                Map<String, BotAction> actionMap,
+                                                Grid grid) {
+        // Collect desired destinations
+        Map<String, Position> desired = new LinkedHashMap<>();
+        for (Champion c : allAlive) {
+            BotAction a = actionMap.get(c.getId());
+            if (a != null && a.type == BotAction.Type.MOVE
+                    && a.targetPosition != null
+                    && grid.isValid(a.targetPosition)) {
+                desired.put(c.getId(), a.targetPosition);
+            }
+        }
+
+        // Group by destination to detect conflicts
+        Map<Position, List<Champion>> byDest = new LinkedHashMap<>();
+        for (Map.Entry<String, Position> e : desired.entrySet()) {
+            Champion c = findByIdInList(e.getKey(), allAlive);
+            if (c != null)
+                byDest.computeIfAbsent(e.getValue(), k -> new ArrayList<>()).add(c);
+        }
+
+        // Conflict resolution via speed-order (PriorityQueue comparator rule):
+        // highest speed wins; BLUE first on ties. Losers are blocked.
+        Set<String> blocked = new HashSet<>();
+        Comparator<Champion> moveConflictOrder =
+            Comparator.comparingInt(Champion::getSpeed).reversed()
+                .thenComparing(c -> c.getTeamSide().equals("BLUE") ? 0 : 1);
+
+        for (List<Champion> contestants : byDest.values()) {
+            if (contestants.size() <= 1) continue;
+            contestants.sort(moveConflictOrder);
+            for (int i = 1; i < contestants.size(); i++)
+                blocked.add(contestants.get(i).getId());
+        }
+
+        // Also block moves into cells occupied by stationary units
+        // (units that are NOT moving away from their current position)
+        Set<String> movingAway = new HashSet<>(desired.keySet());
+        movingAway.removeAll(blocked);
+
+        outer:
+        for (Map.Entry<String, Position> e : desired.entrySet()) {
+            if (blocked.contains(e.getKey())) continue;
+            for (Champion occ : allAlive) {
+                if (movingAway.contains(occ.getId())) continue; // vacating
+                if (occ.getId().equals(e.getKey())) continue;
+                if (occ.getPosition().equals(e.getValue())) {
+                    blocked.add(e.getKey()); // dest is taken by a stationary unit
+                    continue outer;
+                }
+            }
+        }
+
+        // Apply non-blocked moves
+        Map<String, Position> actualDest = new LinkedHashMap<>();
+        for (Champion c : allAlive) {
+            Position dest = desired.get(c.getId());
+            if (dest != null && !blocked.contains(c.getId())) {
+                grid.move(c.getPosition(), dest);
+                c.setPosition(dest);
+                actualDest.put(c.getId(), dest);
+            } else {
+                actualDest.put(c.getId(), c.getPosition());
+            }
+        }
+        return actualDest;
+    }
+
+    // ================================================================
+    // Phase B2: Simultaneous attack/skill resolution (no-log version)
+    // ================================================================
+    private void resolveAttacks(List<Champion> allAlive,
+                                 Map<String, BotAction> actionMap,
+                                 Map<String, Position> startPos,
+                                 List<Champion> blueTeam,
+                                 List<Champion> redTeam,
+                                 Grid grid) {
+        Map<String, Integer> damageAcc = new LinkedHashMap<>();
+        Map<String, Integer> healAcc   = new LinkedHashMap<>();
+
+        for (Champion actor : allAlive) {
+            BotAction a = actionMap.get(actor.getId());
+            if (a == null) continue;
+            if (a.type != BotAction.Type.ATTACK
+                    && a.type != BotAction.Type.CAST_SKILL) continue;
+
+            Champion target = findById(a.targetChampionId, blueTeam, redTeam);
+            if (target == null) continue;
+
+            Position ap = startPos.get(actor.getId());
+            Position tp = startPos.get(target.getId());
+            if (ap == null || tp == null) continue;
+            if (ap.manhattanDistance(tp) > actor.getRange()) continue;
+
+            if (a.type == BotAction.Type.ATTACK) {
+                int eff = Math.max(1, actor.getAttack() - target.getDefense());
+                damageAcc.merge(target.getId(), eff, Integer::sum);
+            } else {
+                if (actor.getMana() >= actor.getSkillManaCost()
+                        && actor.getRemainingCooldown() == 0) {
+                    actor.useSkill();
+                    boolean sameTeam = actor.getTeamSide().equals(target.getTeamSide());
+                    if (sameTeam) {
+                        healAcc.merge(target.getId(), actor.getAttack() + 2, Integer::sum);
+                    } else {
+                        int eff = Math.max(1, actor.getAttack() + 2 - target.getDefense());
+                        damageAcc.merge(target.getId(), eff, Integer::sum);
+                    }
+                }
+            }
+        }
+
+        for (Map.Entry<String, Integer> e : healAcc.entrySet()) {
+            Champion t = findById(e.getKey(), blueTeam, redTeam);
+            if (t != null && t.isAlive()) t.heal(e.getValue());
+        }
+        for (Map.Entry<String, Integer> e : damageAcc.entrySet()) {
+            Champion t = findById(e.getKey(), blueTeam, redTeam);
+            if (t != null && t.isAlive()) {
+                t.directDamage(e.getValue());
+                if (!t.isAlive()) grid.vacate(t.getPosition());
+            }
+        }
+    }
+
+    // ================================================================
+    // Helpers
+    // ================================================================
+    private Map<String, BotAction> collectActions(List<Champion> aliveBlue,
+                                                   List<Champion> aliveRed,
+                                                   Grid grid, int round) {
+        List<BotAction> ba = blueBot.playTurn(aliveBlue, aliveRed, grid, round);
+        List<BotAction> ra = redBot .playTurn(aliveRed, aliveBlue, grid, round);
+        Map<String, BotAction> map = new HashMap<>();
+        for (BotAction a : ba) map.put(a.championId, a);
+        for (BotAction a : ra) map.put(a.championId, a);
+        return map;
+    }
+
+    private Map<String, Position> snapshotPositions(List<Champion> units) {
+        Map<String, Position> m = new HashMap<>();
+        for (Champion c : units) m.put(c.getId(), c.getPosition());
+        return m;
+    }
+
+    private Map<String, Integer> snapshotHp(List<Champion> units) {
+        Map<String, Integer> m = new HashMap<>();
+        for (Champion c : units) m.put(c.getId(), c.getHp());
+        return m;
+    }
+
+    private Set<Position> occupiedSet(List<Champion> units) {
+        Set<Position> s = new HashSet<>();
+        for (Champion c : units) if (c.isAlive()) s.add(c.getPosition());
+        return s;
+    }
+
+    private List<Champion> merged(List<Champion> a, List<Champion> b) {
+        List<Champion> out = new ArrayList<>(a);
+        out.addAll(b);
+        return out;
+    }
+
+    private List<Champion> buildTeam(List<String> draft, String side) {
+        List<Champion> team = new ArrayList<>();
+        for (int i = 0; i < draft.size(); i++)
+            team.add(ChampionFactory.createWithUniqueId(draft.get(i), side, i));
+        return team;
+    }
+
+    private void placeTeam(List<Champion> team, IBotAI bot,
+                            List<Position> cells, boolean isBlue, Grid grid) {
+        List<Position> places = bot.placeTeam(team, cells, isBlue);
+        for (int i = 0; i < team.size() && i < places.size(); i++) {
+            team.get(i).setPosition(places.get(i));
+            grid.occupy(places.get(i));
+        }
+    }
+
+    private void tickManaAndCooldown(List<Champion> team) {
+        for (Champion c : team) {
+            if (c.isAlive()) { c.gainMana(2); c.tickCooldown(); }
+        }
+    }
+
+    private int hpSum(List<Champion> team) {
+        return team.stream().filter(Champion::isAlive).mapToInt(Champion::getHp).sum();
+    }
+
+    private Champion findById(String id, List<Champion> blue, List<Champion> red) {
+        if (id == null) return null;
+        for (Champion c : blue) if (c.getId().equals(id)) return c;
+        for (Champion c : red)  if (c.getId().equals(id)) return c;
+        return null;
+    }
+
+    private Champion findByIdInList(String id, List<Champion> list) {
+        for (Champion c : list) if (c.getId().equals(id)) return c;
+        return null;
+    }
+
     private MatchResult buildResult(String matchType, String winner,
-                                    int rounds, int budget,
-                                    List<Champion> blueTeam,
-                                    List<Champion> redTeam,
-                                    List<String> blueDraft,
-                                    List<String> redDraft) {
-        int blueHp    = blueTeam.stream().filter(Champion::isAlive)
-                                 .mapToInt(Champion::getHp).sum();
-        int redHp     = redTeam.stream().filter(Champion::isAlive)
-                                .mapToInt(Champion::getHp).sum();
-        int blueAlive = (int) blueTeam.stream()
-                                       .filter(Champion::isAlive).count();
-        int redAlive  = (int) redTeam.stream()
-                                      .filter(Champion::isAlive).count();
+                                     int rounds, int budget,
+                                     List<Champion> blue, List<Champion> red,
+                                     List<String> blueDraft, List<String> redDraft) {
         return new MatchResult(matchType, winner, rounds, budget,
-                               blueHp, redHp, blueAlive, redAlive,
-                               String.join("+", blueDraft),
-                               String.join("+", redDraft));
+            hpSum(blue), hpSum(red),
+            (int) blue.stream().filter(Champion::isAlive).count(),
+            (int) red .stream().filter(Champion::isAlive).count(),
+            String.join("+", blueDraft),
+            String.join("+", redDraft));
     }
 
     private List<Champion> deepCopy(List<Champion> list) {
@@ -260,56 +488,10 @@ public class BattleEngine {
         return copy;
     }
 
-    private void executeAction(Champion actor, BotAction action,
-                                List<Champion> blueTeam,
-                                List<Champion> redTeam,
-                                Grid grid) {
-        switch (action.type) {
-            case MOVE:
-                if (action.targetPosition != null
-                        && grid.isValid(action.targetPosition)) {
-                    grid.move(actor.getPosition(), action.targetPosition);
-                    actor.setPosition(action.targetPosition);
-                }
-                break;
-            case ATTACK:
-                Champion target = findById(action.targetChampionId,
-                                           blueTeam, redTeam);
-                if (target != null && target.isAlive()) {
-                    target.takeDamage(actor.getAttack());
-                    if (!target.isAlive()) grid.vacate(target.getPosition());
-                }
-                break;
-            case CAST_SKILL:
-                if (actor.getMana() >= actor.getSkillManaCost()
-                        && actor.getRemainingCooldown() == 0) {
-                    actor.useSkill();
-                    Champion skillTarget = findById(action.targetChampionId,
-                                                    blueTeam, redTeam);
-                    if (skillTarget != null && skillTarget.isAlive()) {
-                        skillTarget.takeDamage(actor.getAttack() + 2);
-                        if (!skillTarget.isAlive()) grid.vacate(skillTarget.getPosition());
-                    }
-                }
-                break;
-            default:
-                break;
-        }
-    }
-
-    private Champion findById(String id,
-                               List<Champion> blue,
-                               List<Champion> red) {
-        if (id == null) return null;
-        for (Champion c : blue) if (c.getId().equals(id)) return c;
-        for (Champion c : red)  if (c.getId().equals(id)) return c;
-        return null;
-    }
-
     private List<Champion> aliveOnly(List<Champion> list) {
-        List<Champion> result = new ArrayList<>();
-        for (Champion c : list) if (c.isAlive()) result.add(c);
-        return result;
+        List<Champion> out = new ArrayList<>();
+        for (Champion c : list) if (c.isAlive()) out.add(c);
+        return out;
     }
 
     private List<Position> getAllowedCells(String side) {
@@ -329,12 +511,11 @@ public class BattleEngine {
     private static String templateName(String id) {
         if (id == null) return "";
         String t = id;
-        if (t.startsWith("BLUE_"))      t = t.substring(5);
-        else if (t.startsWith("RED_"))  t = t.substring(4);
+        if (t.startsWith("BLUE_"))     t = t.substring(5);
+        else if (t.startsWith("RED_")) t = t.substring(4);
         int u = t.lastIndexOf('_');
         if (u > 0 && t.substring(u + 1).matches("\\d+"))
             t = t.substring(0, u);
         return t.isEmpty() ? id : t;
     }
-
 }

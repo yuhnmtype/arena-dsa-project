@@ -7,7 +7,15 @@ import java.util.HashSet;
 import java.util.ArrayList;
 
 public class BattleLogEntry {
-    public final int round;
+    public final int    round;
+    /**
+     * Sub-phase within the round for simultaneous resolution.
+     *   tick = 0 → MOVE phase  (all units move at once)
+     *   tick = 1 → ATTACK phase (all damage applied at once)
+     * GUI steps through entries sequentially; tick lets it group
+     * actions that happened simultaneously in the same round.
+     */
+    public final int    tick;
     public final String championId;
     public final String championName;
     public final String team;
@@ -22,10 +30,11 @@ public class BattleLogEntry {
     public final int targetHpBefore;
     public final int targetHpAfter;
     public final List<Position> bfsPath;
-    public final Set<Position> occupiedSnapshot;
+    public final Set<Position>  occupiedSnapshot;
 
     public BattleLogEntry(
             int round,
+            int tick,
             String championId,
             String championName,
             String team,
@@ -40,8 +49,9 @@ public class BattleLogEntry {
             int targetHpBefore,
             int targetHpAfter,
             List<Position> bfsPath,
-            Set<Position> occupiedSnapshot) {
+            Set<Position>  occupiedSnapshot) {
         this.round            = round;
+        this.tick             = tick;
         this.championId       = championId;
         this.championName     = championName;
         this.team             = team;
@@ -61,7 +71,7 @@ public class BattleLogEntry {
 
     @Override
     public String toString() {
-        return "[R" + round + "] " + team + " " + championName
+        return "[R" + round + "t" + tick + "] " + team + " " + championName
              + " → " + actionType
              + " | HP: " + hpBefore + "→" + hpAfter;
     }
