@@ -115,7 +115,8 @@ public class GamePanel extends JPanel implements ReplayController.StepListener {
         }
 
         if (currentEntry != null) {
-            bfs.showExplored(g, currentEntry.occupiedSnapshot, ORIGIN, ORIGIN);
+            // BFS overlays: path (yellow) + destination (green). The "explored" overlay
+            // is omitted because it tints every occupied cell blue, obscuring the sprites.
             bfs.showPath(g, currentEntry.bfsPath, ORIGIN, ORIGIN);
             bfs.showNextStep(g, currentEntry.bfsPath, ORIGIN, ORIGIN);
         }
